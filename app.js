@@ -3,12 +3,11 @@ const dotenv = require('dotenv');
 const connectDB = require('./config/db');
 const cors = require('cors');
 const path = require('path');
-const { errorHandler } = require('./middlewares/authMiddleware');
+const { errorHandler, requestLogger } = require('./middlewares/authMiddleware');
 
 // Import Routes
 const productRoutes = require('./routes/productRoutes');
 const userRoutes = require('./routes/userRoutes');
-const shopRoutes = require('./routes/shopRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const cartRoutes = require('./routes/cartRoutes');
 
@@ -23,6 +22,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(requestLogger); // Move requestLogger here to log all requests
 
 // Phục vụ các file tĩnh
 app.use(express.static(path.join(__dirname, 'public')));
@@ -30,7 +30,6 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Routes
 app.use('/api/products', productRoutes);
 app.use('/api/users', userRoutes);
-app.use('/api/shops', shopRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/cart', cartRoutes);
 

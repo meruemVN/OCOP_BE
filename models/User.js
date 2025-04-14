@@ -42,7 +42,7 @@ const userSchema = mongoose.Schema(
     address: addressSchema,
     role: {
       type: String,
-      enum: ['user', 'seller', 'distributor', 'admin'],
+      enum: ['user', 'distributor', 'admin'], // Removed 'seller'
       default: 'user'
     },
     isActive: {
@@ -50,10 +50,7 @@ const userSchema = mongoose.Schema(
       default: true
     },
     distributorInfo: distributorInfoSchema,
-    shop: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Shop'
-    }
+    // Removed shop reference
   },
   {
     timestamps: true

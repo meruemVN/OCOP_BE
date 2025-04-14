@@ -3,6 +3,7 @@ const router = express.Router();
 const {
     registerUser,
     loginUser,
+    logoutUser,
     getUserProfile,
     updateUserProfile,
     registerDistributor,
@@ -10,13 +11,16 @@ const {
     getUserById,
     updateUser,
     deleteUser,
-    approveDistributor,
+    getDistributorRequests,
+    manageDistributorRequest,
 } = require('../controllers/userController');
 const { protect, admin } = require('../middlewares/authMiddleware');
 
 // Route công khai
 router.post('/register', registerUser); // Đăng ký người dùng
 router.post('/login', loginUser); // Đăng nhập
+router.post('/logout', logoutUser); // Đăng xuất
+
 
 // Route người dùng xác thực
 router.get('/profile', protect, getUserProfile); // Lấy thông tin người dùng
@@ -28,7 +32,8 @@ router.get('/', protect, admin, getUsers); // Lấy danh sách người dùng
 router.get('/:id', protect, admin, getUserById); // Lấy người dùng theo ID
 router.put('/:id', protect, admin, updateUser); // Cập nhật thông tin người dùng
 router.delete('/:id', protect, admin, deleteUser); // Xóa người dùng
-router.put('/:id/approve-distributor', protect, admin, approveDistributor); // Phê duyệt yêu cầu nhà phân phối
+router.get('/getDistributor',protect,admin,getDistributorRequests); //Lấy danh sách người dùng đã đăng ký làm nhà phân phối
+router.put('/:id/approve-distributor', protect, admin, manageDistributorRequest); // Phê duyệt yêu cầu nhà phân phối
 
 // Optional: Error handling middleware to catch errors across routes
 // router.use(errorHandler);

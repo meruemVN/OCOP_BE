@@ -25,10 +25,15 @@ const getProductById = async (req, res) => {
   }
 };
 
-// Thêm sản phẩm mới
+// Thêm sản phẩm mới (cho nhà phân phối)
 const createProduct = async (req, res) => {
   try {
-    const product = new Product(req.body);
+    const productData = {
+      ...req.body,
+      distributor: req.user._id // Gán người dùng hiện tại là nhà phân phối
+    };
+    
+    const product = new Product(productData);
     const createdProduct = await product.save();
     res.status(201).json(createdProduct);
   } catch (error) {
@@ -42,9 +47,16 @@ const updateProduct = async (req, res) => {
     const product = await Product.findById(req.params.id);
     
     if (product) {
-      Object.assign(product, req.body);
-      const updatedProduct = await product.save();
-      res.json(updatedProduct);
+      // Kiểm tra quyền truy cập
+      if (req.user.role === 'admin' || 
+         (product.distributor && product.distributor.toString() === req.user._id.toString())) {
+        
+        Object.assign(product, req.body);
+        const updatedProduct = await product.save();
+        res.json(updatedProduct);
+      } else {
+        res.status(403).json({ message: 'Không có quyền cập nhật sản phẩm này' });
+      }
     } else {
       res.status(404).json({ message: 'Không tìm thấy sản phẩm' });
     }
@@ -59,8 +71,15 @@ const deleteProduct = async (req, res) => {
     const product = await Product.findById(req.params.id);
     
     if (product) {
-      await product.remove();
-      res.json({ message: 'Đã xóa sản phẩm' });
+      // Kiểm tra quyền truy cập
+      if (req.user.role === 'admin' || 
+         (product.distributor && product.distributor.toString() === req.user._id.toString())) {
+        
+        await Product.deleteOne({ _id: req.params.id });
+        res.json({ message: 'Đã xóa sản phẩm' });
+      } else {
+        res.status(403).json({ message: 'Không có quyền xóa sản phẩm này' });
+      }
     } else {
       res.status(404).json({ message: 'Không tìm thấy sản phẩm' });
     }
@@ -116,7 +135,7 @@ const searchProducts = async (req, res) => {
         .sort(sortOption)
         .limit(pageSize)
         .skip(pageSize * (page - 1))
-        .populate('shop', 'name logo rating');
+        .populate('distributor', 'name'); // Changed from populating shop to distributor
         
       res.json({
         products,

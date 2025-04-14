@@ -1,63 +1,85 @@
 const mongoose = require('mongoose');
 
-const productSchema = mongoose.Schema(
+// Schema đánh giá sản phẩm
+const reviewSchema = mongoose.Schema(
   {
+    user: {
+      type: mongoose.Schema.Types.ObjectId,
+      required: true,
+      ref: 'User'
+    },
     name: {
       type: String,
-      required: true,
-    },
-    description: {
-      type: String,
-      required: true,
-    },
-    category: {
-      type: String,
-      required: true,
-    },
-    price: {
-      type: Number,
-      required: true,
-      default: 0,
-    },
-    countInStock: {
-      type: Number,
-      required: true,
-      default: 0,
+      required: true
     },
     rating: {
       type: Number,
       required: true,
-      default: 0,
+      min: 1,
+      max: 5
     },
-    numReviews: {
-      type: Number,
-      required: true,
-      default: 0,
+    comment: {
+      type: String,
+      required: true
+    }
+  },
+  {
+    timestamps: true
+  }
+);
+
+// Schema sản phẩm
+const productSchema = mongoose.Schema(
+  {
+    name: {
+      type: String,
+      required: true
+    },
+    description: {
+      type: String,
+      required: true
     },
     images: [
       {
         type: String,
-      },
+        required: true
+      }
     ],
-    producer: {
+    category: {
       type: String,
-      required: true,
+      required: true
     },
-    origin: {
-      type: String,
-      required: true,
-    },
-    ocop_rating: {
+    price: {
       type: Number,
       required: true,
-      default: 3,
+      default: 0
     },
-    certification: {
-      type: String,
+    countInStock: {
+      type: Number,
+      required: true,
+      default: 0
     },
+    rating: {
+      type: Number,
+      default: 0
+    },
+    numReviews: {
+      type: Number,
+      default: 0
+    },
+    reviews: [reviewSchema],
+    // Remove shop reference and replace with distributor
+    distributor: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    sold: {
+      type: Number,
+      default: 0
+    }
   },
   {
-    timestamps: true,
+    timestamps: true
   }
 );
 
