@@ -41,6 +41,21 @@ const createProduct = async (req, res) => {
   }
 };
 
+// Lấy tất cả sản phẩm của distributor hiện tại
+const getMyProducts = async (req, res) => {
+  try {
+    // Nếu là admin, có thể lấy tất cả sản phẩm
+    let filter = {};
+    if (req.user.role !== 'admin') {
+      filter.distributor = req.user._id;
+    }
+    const products = await Product.find(filter);
+    res.json(products);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 // Cập nhật sản phẩm
 const updateProduct = async (req, res) => {
   try {
@@ -152,6 +167,7 @@ module.exports = {
   getProducts,
   getProductById,
   createProduct,
+  getMyProducts,
   updateProduct,
   deleteProduct,
   searchProducts,

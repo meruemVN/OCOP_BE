@@ -4,11 +4,14 @@ const {
   getProducts,
   getProductById,
   createProduct,
+  getMyProducts,
   updateProduct,
   deleteProduct,
   searchProducts,
 } = require('../controllers/productController');
 const { protect, distributor, admin } = require('../middlewares/authMiddleware');
+
+router.get('/my-products', protect, distributor, getMyProducts);
 
 // Public routes
 router.get('/', getProducts); // Lấy tất cả sản phẩm

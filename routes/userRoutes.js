@@ -7,6 +7,7 @@ const {
     getUserProfile,
     updateUserProfile,
     registerDistributor,
+    deleteDistributorRequest,
     getUsers,
     getUserById,
     updateUser,
@@ -26,6 +27,7 @@ router.post('/logout', logoutUser); // Đăng xuất
 router.get('/profile', protect, getUserProfile); // Lấy thông tin người dùng
 router.put('/profile', protect, updateUserProfile); // Cập nhật thông tin người dùng
 router.post('/distributor', protect, registerDistributor); // Đăng ký làm nhà phân phối
+router.delete('/distributor', protect, deleteDistributorRequest); // Xóa yêu cầu distributor của chính mình
 
 // Route Admin
 router.get('/', protect, admin, getUsers); // Lấy danh sách người dùng

@@ -219,6 +219,22 @@ const registerDistributor = async (req, res) => {
   }
 };
 
+// Xóa yêu cầu distributor của user hiện tại
+const deleteDistributorRequest = async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+    if (user && user.distributorInfo) {
+      user.distributorInfo = undefined; // xóa trường distributorInfo
+      await user.save();
+      return res.json({ message: 'Đã hủy yêu cầu nhà phân phối.' });
+    } else {
+      return res.status(404).json({ message: 'Bạn chưa đăng ký làm nhà phân phối.' });
+    }
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
 // ----- Admin Routes -----
 
 // Lấy danh sách người dùng (Admin)
@@ -444,6 +460,7 @@ module.exports = {
     getUserProfile,
     updateUserProfile,
     registerDistributor,
+    deleteDistributorRequest,
     // Admin functions
     getUsers,
     getUserById,
