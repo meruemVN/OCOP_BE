@@ -1,105 +1,156 @@
+const asyncHandler = require('express-async-handler');
 const Order = require('../models/Order');
 const Cart = require('../models/Cart');
 const Product = require('../models/Product');
 
 // Tạo đơn hàng mới
-const createOrder = async (req, res) => {
-  try {
-    const { 
-      orderItems, 
-      shippingAddress, 
-      paymentMethod,
-    } = req.body;
+const createOrder = asyncHandler(async (req, res) => {
+  // 1. Lấy thông tin cần thiết từ request body và user
+  const { shippingAddress, paymentMethod, note } = req.body; // Thêm note nếu có
+  const userId = req.user._id;
 
-    if (orderItems && orderItems.length === 0) {
-      return res.status(400).json({ message: 'Không có sản phẩm trong đơn hàng' });
-    }
-
-    // Tính tổng tiền
-    let itemsPrice = 0;
-    for (const item of orderItems) {
-      const product = await Product.findById(item.product);
-      if (!product) {
-        return res.status(404).json({ message: `Không tìm thấy sản phẩm: ${item.name}` });
-      }
-      itemsPrice += product.price * item.quantity;
-      
-      // Kiểm tra số lượng tồn kho
-      if (product.countInStock < item.quantity) {
-        return res.status(400).json({ 
-          message: `Sản phẩm ${product.name} chỉ còn ${product.countInStock} sản phẩm` 
-        });
-      }
-    }
-
-    // Tính phí vận chuyển và thuế
-    const shippingPrice = itemsPrice > 1000000 ? 0 : 30000;
-    const taxPrice = Math.round(0.1 * itemsPrice);
-    const totalPrice = itemsPrice + shippingPrice + taxPrice;
-
-    const order = new Order({
-      user: req.user._id,
-      orderItems,
-      shippingAddress,
-      paymentMethod,
-      taxPrice,
-      shippingPrice,
-      totalPrice,
-    });
-
-    const createdOrder = await order.save();
-
-    // Cập nhật số lượng tồn kho
-    for (const item of orderItems) {
-      const product = await Product.findById(item.product);
-      product.countInStock -= item.quantity;
-      await product.save();
-    }
-
-    // Xóa giỏ hàng sau khi đặt hàng (nếu cần)
-    // await Cart.findOneAndDelete({ user: req.user._id });
-
-    res.status(201).json(createdOrder);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
+  // Kiểm tra thông tin bắt buộc từ body
+  if (!shippingAddress || !paymentMethod) {
+    res.status(400);
+    throw new Error('Thiếu thông tin địa chỉ giao hàng hoặc phương thức thanh toán');
   }
-};
+  if (typeof shippingAddress !== 'object' || Object.keys(shippingAddress).length === 0) {
+       res.status(400);
+       throw new Error('Thông tin địa chỉ giao hàng không hợp lệ');
+  }
+   // Thêm kiểm tra chi tiết cho các trường bắt buộc trong shippingAddress
+   const requiredAddressFields = ['fullName', 'phone', 'province', 'district', 'ward', 'address'];
+   for (const field of requiredAddressFields) {
+       if (!shippingAddress[field] || String(shippingAddress[field]).trim() === '') { // Kiểm tra cả rỗng
+           res.status(400);
+           throw new Error(`Địa chỉ giao hàng thiếu hoặc trống trường: ${field}`);
+       }
+   }
 
-// Lấy đơn hàng theo ID
-const getOrderById = async (req, res) => {
-  try {
+  // 2. Lấy giỏ hàng của người dùng
+  const cart = await Cart.findOne({ user: userId }).populate({
+    path: 'items.product',
+    select: 'name price images countInStock' // Lấy đủ thông tin cần thiết
+  });
+
+  // Kiểm tra giỏ hàng
+  if (!cart || !cart.items || cart.items.length === 0) {
+    res.status(400);
+    throw new Error('Giỏ hàng trống, không thể đặt hàng');
+  }
+
+  // 3. Kiểm tra tồn kho cho từng sản phẩm trong giỏ hàng
+  for (const item of cart.items) {
+    if (!item.product) {
+         console.error(`Lỗi: Sản phẩm với ID ${item.product} trong giỏ hàng không tồn tại hoặc không được populate.`);
+         res.status(404);
+         throw new Error(`Sản phẩm ID ${item.product} không tìm thấy trong hệ thống.`);
+    }
+    if (item.quantity > item.product.countInStock) {
+      res.status(400);
+      throw new Error(`Sản phẩm "${item.product.name}" không đủ số lượng (chỉ còn ${item.product.countInStock})`);
+    }
+  }
+
+  // 4. Lấy tổng tiền hàng từ giỏ hàng
+  const itemsPrice = cart.totalPrice; // totalPrice đã được tính toán chính xác trong Cart model
+
+  // 5. Tính phí vận chuyển
+  const shippingPrice = itemsPrice > 500000 ? 0 : 30000;
+
+  // 6. Tính tổng tiền cuối cùng (Không có thuế)
+  const totalPrice = itemsPrice + shippingPrice;
+
+  // 7. Tạo mảng orderItems từ cart items
+  const orderItems = cart.items.map(item => ({
+    product: item.product._id,
+    name: item.product.name,
+    quantity: item.quantity,
+    price: item.product.price, // Lấy giá mới nhất từ product
+    image: (item.product.images && item.product.images.length > 0) ? item.product.images[0] : '',
+  }));
+
+  // 8. Tạo đối tượng đơn hàng mới
+  const order = new Order({
+    user: userId,
+    orderItems,
+    shippingAddress,
+    paymentMethod,
+    itemsPrice,
+    shippingPrice,
+    totalPrice,
+    note: note || '',
+    // status mặc định là 'pending'
+  });
+
+  // 9. Lưu đơn hàng vào database
+  const createdOrder = await order.save();
+
+  // 10. Cập nhật số lượng tồn kho sản phẩm
+  for (const item of cart.items) {
+    try {
+         // item.product đã được populate, không cần tìm lại
+         const productToUpdate = item.product;
+         productToUpdate.countInStock -= item.quantity;
+         await productToUpdate.save();
+    } catch(stockError){
+         console.error(`Lỗi cập nhật tồn kho cho SP ${item.product._id} sau khi tạo đơn ${createdOrder._id}:`, stockError);
+         // Nên có cơ chế xử lý lỗi này (rollback đơn hàng hoặc đánh dấu cần xử lý)
+         // Tạm thời throw lỗi để dừng quá trình và báo lỗi 500
+         throw new Error('Lỗi khi cập nhật tồn kho sản phẩm.');
+    }
+  }
+
+  // 11. Xóa các sản phẩm trong giỏ hàng sau khi đặt hàng thành công
+   try {
+       cart.items = [];
+       // cart.totalPrice sẽ tự về 0 khi save
+       await cart.save();
+       console.log(`Giỏ hàng của user ${userId} đã được xóa sau khi tạo đơn ${createdOrder._id}.`);
+   } catch(clearCartError) {
+       console.error(`Lỗi xóa giỏ hàng cho user ${userId} sau khi tạo đơn ${createdOrder._id}:`, clearCartError);
+       // Log lỗi nhưng không nên làm crash quá trình
+   }
+
+  // 12. Trả về đơn hàng đã tạo
+  res.status(201).json(createdOrder);
+});
+
+
+// @desc    Lấy đơn hàng theo ID
+// @route   GET /api/orders/:id
+// @access  Private
+const getOrderById = asyncHandler(async (req, res) => {
     const order = await Order.findById(req.params.id)
-      .populate('user', 'name email')
-      .populate('orderItems.product');
+      .populate('user', 'name email') // Populate thông tin user
+      // Không cần populate product trong orderItems vì đã lưu thông tin cơ bản
+      // .populate('orderItems.product', 'name images'); // Bỏ nếu không cần
 
     if (order) {
-      // Kiểm tra quyền truy cập
+      // Kiểm tra quyền truy cập: Admin hoặc chủ đơn hàng
       if (
-        req.user.role === 'admin' || 
-        req.user.role === 'distributor' ||
+        req.user.role === 'admin' ||
         order.user._id.toString() === req.user._id.toString()
       ) {
         res.json(order);
       } else {
-        res.status(403).json({ message: 'Không có quyền xem đơn hàng này' });
+        res.status(403); // Forbidden
+        throw new Error('Không có quyền xem đơn hàng này');
       }
     } else {
-      res.status(404).json({ message: 'Không tìm thấy đơn hàng' });
+      res.status(404);
+      throw new Error('Không tìm thấy đơn hàng');
     }
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
+});
 
-// Lấy danh sách đơn hàng của người dùng
-const getMyOrders = async (req, res) => {
-  try {
-    const orders = await Order.find({ user: req.user._id });
-    res.json(orders);
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
+// @desc    Lấy danh sách đơn hàng của người dùng đang đăng nhập
+// @route   GET /api/orders/myorders
+// @access  Private
+const getMyOrders = asyncHandler(async (req, res) => {
+  const orders = await Order.find({ user: req.user._id }).sort({ createdAt: -1 }); // Sắp xếp mới nhất lên đầu
+  res.json(orders);
+});
+
 
 // Cập nhật trạng thái đã thanh toán
 const updateOrderToPaid = async (req, res) => {

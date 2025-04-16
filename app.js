@@ -1,9 +1,10 @@
 const express = require('express');
 const dotenv = require('dotenv');
 const connectDB = require('./config/db');
-const cors = require('cors');
+const cors = require('cors'); // Import cors
 const path = require('path');
-const { errorHandler, requestLogger } = require('./middlewares/authMiddleware');
+// Sửa lại import middleware cho đúng file (giả sử là middleware/authMiddleware.js)
+const { errorHandler, requestLogger } = require('./middlewares/authMiddleware'); // SỬA ĐƯỜNG DẪN NẾU CẦN
 
 // Import Routes
 const productRoutes = require('./routes/productRoutes');
@@ -18,31 +19,42 @@ connectDB();
 
 const app = express();
 
-// Middleware
-app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.use(requestLogger); // Move requestLogger here to log all requests
+// --- Cấu hình CORS ---
+const corsOptions = {
+  // Thay bằng địa chỉ chính xác của frontend của bạn
+  // Quan trọng: Không dùng '*' khi credentials là true
+  origin: process.env.FRONTEND_URL || 'http://localhost:8080', // Lấy từ .env hoặc mặc định
+  credentials: true, // Cho phép gửi cookie và headers xác thực
+  optionsSuccessStatus: 200 // Một số trình duyệt cũ cần cái này
+};
+app.use(cors(corsOptions)); // <<== SỬ DỤNG OPTIONS Ở ĐÂY
 
-// Phục vụ các file tĩnh
+// Middleware cơ bản
+app.use(express.json()); // Parse JSON bodies
+app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
+app.use(requestLogger); // Middleware ghi log request
+
+// Phục vụ các file tĩnh (nếu có trong thư mục public)
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Routes
+// --- Routes API ---
 app.use('/api/products', productRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/cart', cartRoutes);
 
-// Route mặc định
-app.get('/', (req, res) => {
+// Route mặc định (nên đặt sau các route API)
+app.get('/api', (req, res) => { // Có thể đổi thành /api để rõ ràng hơn
   res.send('API đang chạy...');
 });
 
-// Error Middleware
-app.use(errorHandler);
+// --- Error Middleware (Luôn đặt cuối cùng) ---
 
-const PORT = process.env.PORT || 5000;
+
+app.use(errorHandler); // Xử lý tất cả các lỗi khác
+
+const PORT = process.env.PORT || 8080;
 
 app.listen(PORT, () => {
-  console.log(`Server đang chạy trên cổng ${PORT}`);
+  console.log(`Server đang chạy trên cổng ${PORT} ở chế độ ${process.env.NODE_ENV || 'development'}`); // Thêm NODE_ENV cho rõ
 });
