@@ -12,13 +12,22 @@ const addressSchema = mongoose.Schema({
 });
 
 // Schema thông tin nhà phân phối
-const distributorInfoSchema = mongoose.Schema({
+const distributorInfoSchema = new mongoose.Schema({
   companyName: { type: String, required: true },
-  taxId: { type: String, required: true },
-  businessLicense: { type: String, required: true },
-  distributionArea: [{ type: String, required: true }],
-  approvedAt: { type: Date }
-});
+  taxId: { type: String, required: true, unique: true }, // Mã số thuế nên là duy nhất
+  businessLicense: { type: String, required: true }, // Lưu URL/path file hoặc ID
+  distributionArea: { type: String, required: true }, // Khu vực phân phối
+  status: {
+      type: String,
+      enum: ['pending', 'approved', 'rejected'],
+      required: true,
+      default: 'pending',
+  },
+  requestDate: { type: Date, default: Date.now },
+  approvalDate: { type: Date },
+  rejectionDate: { type: Date },
+  // Thêm các trường khác nếu cần: website, contactPerson, etc.
+}, { _id: false }); // Không cần _id riêng
 
 // Schema người dùng
 const userSchema = mongoose.Schema(

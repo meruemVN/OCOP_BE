@@ -11,6 +11,7 @@ const productRoutes = require('./routes/productRoutes');
 const userRoutes = require('./routes/userRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const cartRoutes = require('./routes/cartRoutes');
+const distributorRoutes = require('./routes/distributorRoutes'); 
 
 dotenv.config();
 
@@ -42,6 +43,7 @@ app.use('/api/products', productRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/cart', cartRoutes);
+app.use('/api/distributors', distributorRoutes);
 
 // Route mặc định (nên đặt sau các route API)
 app.get('/api', (req, res) => { // Có thể đổi thành /api để rõ ràng hơn

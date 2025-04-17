@@ -34,8 +34,8 @@ router.get('/', protect, admin, getUsers); // Lấy danh sách người dùng
 router.get('/:id', protect, admin, getUserById); // Lấy người dùng theo ID
 router.put('/:id', protect, admin, updateUser); // Cập nhật thông tin người dùng
 router.delete('/:id', protect, admin, deleteUser); // Xóa người dùng
-router.get('/getDistributor',protect,admin,getDistributorRequests); //Lấy danh sách người dùng đã đăng ký làm nhà phân phối
-router.put('/:id/approve-distributor', protect, admin, manageDistributorRequest); // Phê duyệt yêu cầu nhà phân phối
+router.get('/distributors/requests',protect,admin,getDistributorRequests); //Lấy danh sách người dùng đã đăng ký làm nhà phân phối
+router.put('/:id/manage-distributor', protect, admin, manageDistributorRequest); // Phê duyệt yêu cầu nhà phân phối
 
 // Optional: Error handling middleware to catch errors across routes
 // router.use(errorHandler);
