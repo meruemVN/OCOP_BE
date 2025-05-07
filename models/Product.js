@@ -55,12 +55,7 @@ const productSchema = mongoose.Schema(
       }
     ],
     // Thêm các trường khác từ CSV nếu có
-    full_name: { type: String }, // Ví dụ
     origin: { type: String },
-    producer: { type: String }, // Lưu tên producer dạng String nếu không có collection riêng
-    short_description: { type: String },
-    product_url: { type: String }, // URL gốc từ CSV
-
     category: { // Cân nhắc dùng ObjectId nếu có collection Category
       type: String, // Hoặc mongoose.Schema.Types.ObjectId, ref: 'Category'
       required: [true, 'Vui lòng nhập danh mục']
@@ -96,9 +91,6 @@ const productSchema = mongoose.Schema(
       default: 0,
        min: [0, 'Số lượng bán không thể âm']
     },
-    // Thêm các trường OCOP rating nếu có
-    ocop_rating: { type: Number, default: null },
-    ocop_rating_from_list: { type: Number, default: null },
 
   },
   {

@@ -101,40 +101,45 @@ const createProduct = asyncHandler(async (req, res) => {
 // @route   GET /api/products/my-products
 // @access  Private/DistributorOrAdmin
 const getMyProducts = asyncHandler(async (req, res) => {
-  if (req.user.role !== 'distributor' && req.user.role !== 'admin') {
+  console.log('--- Inside getMyProducts ---');
+  console.log('Logged-in user (req.user):', JSON.stringify(req.user, null, 2)); // Log chi tiết req.user
+  if (!req.user || (req.user.role !== 'distributor' && req.user.role !== 'admin')) {
+    console.log('User role check failed or user not found.');
     res.status(403);
     throw new Error('Chỉ nhà phân phối hoặc admin mới có quyền truy cập');
   }
 
+  const distributorId = req.user._id;
+  console.log('Distributor ID for query:', distributorId);
+  console.log('Type of Distributor ID:', typeof distributorId); // Quan trọng: Kiểm tra kiểu dữ liệu
+
+  const filterConditions = { distributor: distributorId };
+  console.log('Filter conditions for MongoDB:', filterConditions);
+
   const pageSize = parseInt(req.query.pageSize, 10) || 10;
   const page = parseInt(req.query.page, 10) || 1;
 
-  const filterConditions = { distributor: req.user._id };
-  
-  // Thêm filter theo keyword nếu có
-  const keyword = req.query.keyword;
-  if (keyword) {
-    const regex = new RegExp(keyword, 'i'); // 'i' for case-insensitive
-    filterConditions.$or = [
-      { name: regex },
-      { description: regex },
-      { category: regex }
-    ];
+  try {
+    const count = await Product.countDocuments(filterConditions);
+    console.log(`Count of products found with filter: ${count}`);
+
+    const products = await Product.find(filterConditions)
+      .sort({ createdAt: -1 })
+      .limit(pageSize)
+      .skip(pageSize * (page - 1));
+    console.log(`Products retrieved (first page): ${products.length} items`);
+    // console.log('Retrieved products data:', JSON.stringify(products, null, 2)); // Bỏ comment để xem chi tiết sản phẩm
+
+    res.json({
+      products,
+      page,
+      pages: Math.ceil(count / pageSize),
+      count
+    });
+  } catch (dbError) {
+    console.error("Error during MongoDB query in getMyProducts:", dbError);
+    res.status(500).json({ message: "Lỗi truy vấn cơ sở dữ liệu." });
   }
-
-  const count = await Product.countDocuments(filterConditions);
-  const products = await Product.find(filterConditions)
-    .sort({ createdAt: -1 })
-    .limit(pageSize)
-    .skip(pageSize * (page - 1));
-    // .populate('category'); // Populate category nếu category là ObjectId
-
-  res.json({
-    products,
-    page,
-    pages: Math.ceil(count / pageSize),
-    count
-  });
 });
 
 
