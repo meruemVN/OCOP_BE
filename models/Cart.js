@@ -40,25 +40,40 @@ const cartSchema = mongoose.Schema(
 );
 
 // >>> THÊM HOOK PRE-SAVE VÀO ĐÂY <<<
-cartSchema.pre('save', function (next) {
-  console.log('[Cart Pre-Save Hook] Running for cart:', this._id); // Thêm ID cart
-  let calculatedTotal = 0;
-  if (this.items && this.items.length > 0) {
-      calculatedTotal = this.items.reduce((acc, item) => {
-          // >> KIỂM TRA LOGIC NÀY KỸ <<
-          const price = Number(item.price) || 0;
-          const quantity = Number(item.quantity) || 0;
-          if (isNaN(price) || isNaN(quantity)) { // Thêm kiểm tra NaN
-              console.error(`[Cart Pre-Save Hook] Invalid price or quantity found for item:`, item);
-          }
-          return acc + (price * quantity); // Đảm bảo cộng dồn đúng
-      }, 0);
-  } else {
-  }
-  this.totalPrice = calculatedTotal; // Gán giá trị đã tính toán
-  next();
+cartSchema.pre('save', async function(next) { // Nên dùng async nếu có populate bên trong
+    let calculatedTotalPrice = 0;
+    if (this.items && this.items.length > 0) {
+        // Nếu bạn muốn đảm bảo giá là mới nhất, bạn cần populate ở đây,
+        // nhưng điều này có thể làm chậm save và gây ra vấn đề nếu product bị xóa giữa chừng.
+        // Tốt hơn là dựa vào item.price đã lưu, và chỉ tính tổng cho item có product.
+        
+        // Lọc ra các item có product không null trước khi tính tổng
+        // Hoặc, nếu bạn đã xóa item lỗi ở controller, thì không cần lọc ở đây nữa.
+        // Nhưng để an toàn, có thể thêm kiểm tra:
+        for (const item of this.items) {
+            // Chỉ tính tổng nếu item có price và quantity hợp lệ
+            // và lý tưởng nhất là item.product không phải null (nếu bạn không xóa item lỗi ở controller)
+            if (item.product && item.price && typeof item.price === 'number' && item.quantity && typeof item.quantity === 'number' && item.quantity > 0) {
+                // Optional: Lấy giá mới nhất từ Product nếu bạn muốn (có thể làm chậm)
+                // const product = await mongoose.model('Product').findById(item.product);
+                // if (product) {
+                //    item.price = product.price; // Cập nhật giá trong item của giỏ hàng
+                //    calculatedTotalPrice += product.price * item.quantity;
+                // } else {
+                //    // Sản phẩm không còn tồn tại, không tính vào tổng giá
+                //    // Cân nhắc xóa item này khỏi this.items
+                // }
+                calculatedTotalPrice += item.price * item.quantity;
+            } else if (!item.product && item.price && item.quantity) {
+                // Nếu item.product là null nhưng vẫn có price và quantity (dữ liệu cũ/lỗi)
+                // Bỏ qua item này hoặc xử lý theo logic của bạn (ví dụ: ghi log)
+                console.warn(`Cart item for user ${this.user} has product=null but price=${item.price}. Item ignored in total.`);
+            }
+        }
+    }
+    this.totalPrice = calculatedTotalPrice;
+    next();
 });
-
 
 const Cart = mongoose.model('Cart', cartSchema);
 

@@ -52,16 +52,24 @@ const protect = async (req, res, next) => {
   }
 };
 
-const checkRole = (...roles) => {
+const authorize = (...roles) => { // roles là một mảng hoặc danh sách các đối số vai trò
   return (req, res, next) => {
     if (!req.user) {
-      return res.status(401).json({ message: 'Không được phép, vui lòng đăng nhập' });
+      res.status(401); // Unauthorized
+      // console.log('Authorize: User not authenticated');
+      throw new Error('Không được phép, vui lòng đăng nhập lại');
     }
     
-    if (!roles.includes(req.user.role)) {
-      return res.status(403).json({ message: 'Không có quyền truy cập' });
+    // Đảm bảo roles luôn là một mảng để xử lý nhất quán
+    const allowedRoles = Array.isArray(roles[0]) ? roles[0] : roles;
+
+    if (!allowedRoles.includes(req.user.role)) {
+      res.status(403); // Forbidden
+      // console.log(`Authorize: Role '${req.user.role}' not in allowed roles [${allowedRoles.join(', ')}]`);
+      throw new Error(`Truy cập bị từ chối. Vai trò '${req.user.role}' không có quyền.`);
     }
     
+    // console.log(`Authorize: Role '${req.user.role}' is allowed.`);
     next();
   };
 };
@@ -135,4 +143,4 @@ const requestLogger = (req, res, next) => {
 };
 
 
-module.exports = { protect, checkRole, admin, distributor, errorHandler, requestLogger };
+module.exports = { protect, authorize, admin, distributor, errorHandler, requestLogger };

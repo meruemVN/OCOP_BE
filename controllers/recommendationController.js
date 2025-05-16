@@ -1,102 +1,130 @@
 const recommenderService = require('../services/recommender.service');
+const asyncHandler = require('express-async-handler'); 
+const Order = require('../models/Order');
+
+// --- Helper Function để lấy lịch sử tương tác (VÍ DỤ - BẠN CẦN THAY THẾ LOGIC THỰC) ---
+async function getUserInteractionHistory(userId) {
+    try {
+        const orders = await Order.find({ user: userId }).select('orderItems.original_id').lean();
+        if (!orders || orders.length === 0) return [];
+        const interactedOriginalProductIds = new Set();
+        orders.forEach(order => {
+            order.orderItems?.forEach(item => {
+                if (item.original_id !== undefined && item.original_id !== null) {
+                    interactedOriginalProductIds.add(String(item.original_id));
+                }
+            });
+        });
+        return Array.from(interactedOriginalProductIds);
+
+    } catch (error) {
+        console.error(`[RecController] Error fetching interaction history for ${userId}:`, error);
+        return []; 
+    }
+}
+// --- Kết thúc Helper Function ---
 
 exports.getRecommendationsForProduct = async (req, res) => {
     try {
         const { productId } = req.params;
-        const topN = req.query.top_n ? parseInt(req.query.top_n, 10) : 10; // Mặc định là 10
+        const topN = req.query.top_n ? parseInt(req.query.top_n, 10) : 10;
 
-        if (isNaN(topN) || topN <= 0) {
-            return res.status(400).json({ error: 'Invalid top_n parameter. Must be a positive integer.' });
-        }
+        if (!productId) return res.status(400).json({ error: 'Product ID parameter is required.' });
+        if (isNaN(topN) || topN <= 0 || topN > 50) return res.status(400).json({ error: 'Invalid top_n parameter (1-50).' });
         
-        // productId có thể là số hoặc chuỗi, script Python sẽ xử lý
-        if (!productId) {
-             return res.status(400).json({ error: 'Product ID parameter is required.' });
-        }
-
-        console.log(`Controller: Received request for recommendations for productId: ${productId}, topN: ${topN}`);
         const result = await recommenderService.getRecommendations(productId, topN);
 
         if (result.error) {
-            // Dựa vào nội dung lỗi từ Python script để quyết định status code
-            // Ví dụ, nếu lỗi từ Python đã bao gồm thông tin về not found hoặc invalid input
-            console.warn(`Controller: Error from recommender service for productId ${productId}:`, result.error);
-            if (result.error.toLowerCase().includes("not found")) {
-                return res.status(404).json(result);
-            }
-            // Các lỗi khác do input hoặc model không sẵn sàng có thể là 400 hoặc 503
-            if (result.error.toLowerCase().includes("invalid product id") || result.error.toLowerCase().includes("format")) {
-                 return res.status(400).json(result);
-            }
-            // Nếu lỗi liên quan đến file model không tồn tại, có thể coi là lỗi server chưa sẵn sàng
-            if (result.error.toLowerCase().includes("file not found") || result.error.toLowerCase().includes("failed to load model")) {
-                return res.status(503).json({ error: "Recommendation service is temporarily unavailable or model files are missing.", details: result.error});
-            }
-            return res.status(400).json(result); // Mặc định cho các lỗi khác từ Python script
+            console.warn(`[Controller] ProductRec Error for ${productId}:`, result.error, result.trace || '');
+            const errorMsg = String(result.error).toLowerCase();
+            if (errorMsg.includes("not found")) return res.status(404).json({ error: result.error });
+            return res.status(400).json({ error: result.error }); // Lỗi từ Python
         }
-        res.status(200).json(result);
-    } catch (error) {
-        // Lỗi này thường là lỗi khi gọi service (ví dụ: Python process không spawn được)
-        console.error("Controller: Internal server error in getRecommendationsForProduct:", error.message, error.stack);
-        res.status(500).json({ error: 'Internal server error while fetching recommendations.', details: error.message });
+        // Python trả về: { product_id_input: ..., recommendations: [...] }
+        res.status(200).json({ recommendations: result.recommendations || [] });
+    } catch (e) { // Lỗi từ service hoặc lỗi không bắt được từ Python
+        console.error("[Controller] Uncaught ProductRec Error:", e.error || e.message, e.trace || '');
+        res.status(500).json({ error: e.error || 'Internal server error processing product recommendations.' });
     }
 };
+
+exports.getRecommendationsForUser = asyncHandler(async (req, res) => {
+    // const userId = req.user._id; // Nếu bạn muốn gợi ý cho người dùng đang đăng nhập
+    const { userId } = req.params; // Nếu bạn muốn admin hoặc người khác có thể gọi cho một user cụ thể
+                                 // Trong trường hợp này, cần kiểm tra quyền nếu userId !== req.user._id
+    const topN = req.query.top_n ? parseInt(req.query.top_n, 10) : 10;
+
+    if (!userId) {
+        res.status(400); // Bad Request
+        throw new Error('User ID is required to get recommendations.');
+    }
+    if (isNaN(topN) || topN <= 0 || topN > 50) { // Giới hạn topN
+        res.status(400);
+        throw new Error('Invalid top_n parameter. Must be a positive integer (1-50).');
+    }
+
+    // Lấy lịch sử tương tác (mua hàng) của người dùng
+    const interactedPids = await getUserInteractionHistory(userId);
+    // interactedPids là mảng các product_id (dạng chuỗi)
+
+    const result = await recommenderService.getUserRecommendations(userId.toString(), topN, interactedPids);
+
+    if (result.error) {
+        console.warn(`[RecController] UserRec Error from service for ${userId}:`, result.error, result.trace || '');
+        if (result.message && (result.recommendations && result.recommendations.length === 0)) {
+             return res.status(200).json({ recommendations: [], message: result.message });
+        }
+        // Dựa vào nội dung lỗi từ Python để quyết định status code phù hợp hơn
+        const errorMsg = String(result.error).toLowerCase();
+        if (errorMsg.includes("not found") || errorMsg.includes("no interaction history")) return res.status(404).json({ error: result.error, recommendations: [] }); // Not found
+        return res.status(400).json({ error: result.error }); // Bad request (e.g. invalid input to Python)
+    }
+    
+    res.status(200).json({ recommendations: result.recommendations || [] });
+});
 
 exports.listProducts = async (req, res) => {
     try {
         const page = req.query.page ? parseInt(req.query.page, 10) : 1;
-        const perPage = req.query.per_page ? parseInt(req.query.per_page, 10) : 20;
-
-        if (isNaN(page) || page <= 0) {
-            return res.status(400).json({ error: 'Invalid page parameter. Must be a positive integer.' });
-        }
-        if (isNaN(perPage) || perPage <= 0) {
-            return res.status(400).json({ error: 'Invalid per_page parameter. Must be a positive integer.' });
-        }
+        const perPage = req.query.per_page ? parseInt(req.query.per_page, 10) : 20; // Nhận per_page từ FE
         
-        console.log(`Controller: Received request for product list: page=${page}, perPage=${perPage}`);
-        const result = await recommenderService.getProducts(page, perPage);
+        const { category, province, sort_by } = req.query;
+        const minPrice = req.query.min_price ? parseFloat(req.query.min_price) : undefined;
+        const maxPrice = req.query.max_price ? parseFloat(req.query.max_price) : undefined;
 
-        if (result.error || result.status === 'error') {
-            console.warn(`Controller: Error from recommender service for product list:`, result.error || result.message);
-            // Nếu lỗi liên quan đến file model không tồn tại
-            if (result.error && result.error.toLowerCase().includes("file not found")) {
-                 return res.status(503).json({ error: "Product data is temporarily unavailable or data files are missing.", details: result.error});
-            }
-            return res.status(500).json(result); // Lỗi chung từ Python
+        if (isNaN(page) || page <= 0) return res.status(400).json({ error: 'Invalid page parameter.' });
+        if (isNaN(perPage) || perPage <= 0 || perPage > 100) return res.status(400).json({ error: 'Invalid per_page parameter (1-100).' });
+        if (minPrice !== undefined && isNaN(minPrice)) return res.status(400).json({ error: 'Invalid min_price.' });
+        if (maxPrice !== undefined && isNaN(maxPrice)) return res.status(400).json({ error: 'Invalid max_price.' });
+
+
+        const options = { page, perPage }; // Service dùng perPage
+        if (category) options.category = category;
+        if (province) options.province = province;
+        if (minPrice !== undefined) options.minPrice = minPrice; // Service dùng minPrice
+        if (maxPrice !== undefined) options.maxPrice = maxPrice; // Service dùng maxPrice
+        if (sort_by) options.sortBy = sort_by;                   // Service dùng sortBy
+        
+        const result = await recommenderService.getProducts(options);
+
+        if (result.error) {
+            console.warn(`[Controller] ListProducts Error:`, result.error, result.trace || '');
+            return res.status(500).json({ error: result.error }); // Lỗi từ Python
         }
-        res.status(200).json(result);
-    } catch (error) {
-        console.error("Controller: Internal server error in listProducts:", error.message, error.stack);
-        res.status(500).json({ error: 'Internal server error while fetching products.', details: error.message });
+        // Python trả về: { products: [...], count: ..., page: ..., pages: ...}
+        // Đảm bảo frontend nhận được cấu trúc nó mong muốn
+        res.status(200).json({
+            products: result.products || [],
+            page: result.page || 1,
+            pages: result.pages || 0, // Python trả về total_pages, map sang pages
+            count: result.count || 0  // Python trả về total_products, map sang count
+        });
+    } catch (e) {
+        console.error("[Controller] Uncaught ListProducts Error:", e.error || e.message, e.trace || '');
+        res.status(500).json({ error: e.error || 'Internal server error fetching products.' });
     }
 };
 
-// Endpoint quản trị để refresh model
-exports.refreshModel = async (req, res) => {
-    // LƯU Ý: Đây là một tác vụ chạy nền dài hạn.
-    // Trong một ứng dụng thực tế, bạn không nên await ở đây.
-    // Thay vào đó, bạn nên kích hoạt một job/task chạy nền và trả về 202 Accepted ngay.
-    const forceCrawl = req.query.force_crawl === 'true'; // Ví dụ
-    try {
-        console.log(`Controller: Initiating model refresh (forceCrawl=${forceCrawl}).`);
-        // Để chạy nền thực sự, không await:
-        recommenderService.refreshDataAndModels(forceCrawl)
-            .then(pythonResult => {
-                // Log kết quả từ Python khi nó hoàn thành
-                console.log("Controller: Python model refresh process finished.", pythonResult);
-                // Ở đây bạn có thể gửi thông báo (webhook, socket, email) khi hoàn tất
-            })
-            .catch(pythonError => {
-                console.error("Controller: Python model refresh process failed.", pythonError.message);
-                // Xử lý lỗi chạy nền
-            });
-
-        // Trả về ngay lập tức cho client
-        res.status(202).json({ message: "Model refresh process initiated. This may take a long time and will run in the background." });
-        
-    } catch (error) { // Lỗi này xảy ra nếu `recommenderService.refreshDataAndModels` throw ngay lập tức (ít khả năng nếu nó được thiết kế để chạy nền)
-        console.error("Controller: Failed to initiate model refresh process:", error.message, error.stack);
-        res.status(500).json({ error: 'Failed to initiate model refresh process.', details: error.message });
-    }
+exports.refreshModel = async (req, res) => { // Giữ nguyên, không dùng nếu model precomputed
+    res.status(501).json({ message: "Model refresh via API is not implemented as models are pre-computed/generated externally." });
 };

@@ -7,6 +7,9 @@ const orderItemSchema = mongoose.Schema({
     required: true,
     ref: 'Product'
   },
+  original_id: {
+     type: Number 
+  },
   name: { // Tên sản phẩm tại thời điểm đặt hàng
     type: String,
     required: true

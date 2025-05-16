@@ -1,262 +1,59 @@
+// controllers/productController.js
 const asyncHandler = require('express-async-handler');
-const Product = require('../models/Product'); // Đảm bảo đường dẫn đến model là chính xác
-// const User = require('../models/User'); // User model có thể không cần thiết ở đây nếu chỉ populate distributor
+const Product = require('../models/Product'); // Đảm bảo đường dẫn đúng
 
-// @desc    Lấy tất cả sản phẩm (mặc định, có thể bị thay thế bởi searchProducts nếu dùng chung route)
+// @desc    Lấy tất cả sản phẩm VỚI LỌC, SẮP XẾP, PHÂN TRANG
 // @route   GET /api/products
 // @access  Public
 const getProducts = asyncHandler(async (req, res) => {
-  const pageSize = 12; // Số sản phẩm mỗi trang
+  // console.log('[API GET /products] Query params:', req.query);
+
+  // --- Phân trang ---
   const page = Math.max(1, parseInt(req.query.pageNumber || req.query.page, 10) || 1);
-
-  const count = await Product.countDocuments({});
-  const products = await Product.find({})
-    .sort({ createdAt: -1 }) // Mặc định sắp xếp theo mới nhất
-    .limit(pageSize)
-    .skip(pageSize * (page - 1))
-    .populate('distributor', 'name distributorInfo.companyName'); // Lấy thông tin nhà phân phối
-
-  res.json({
-    products,
-    page,
-    pages: Math.ceil(count / pageSize),
-    count
-  });
-});
-
-// @desc    Lấy một sản phẩm theo ID
-// @route   GET /api/products/:id
-// @access  Public
-const getProductById = asyncHandler(async (req, res) => {
-  // Kiểm tra tính hợp lệ của ID trước khi truy vấn (tùy chọn)
-  if (!req.params.id.match(/^[0-9a-fA-F]{24}$/)) {
-      res.status(400); // Bad Request
-      throw new Error('ID sản phẩm không hợp lệ');
-  }
-  const product = await Product.findById(req.params.id)
-    .populate('distributor', 'name distributorInfo.companyName')
-    .populate('reviews.user', 'name'); // Populate thêm user của review nếu cần
-
-  if (!product) {
-    res.status(404);
-    throw new Error('Không tìm thấy sản phẩm');
-  }
-  res.json(product);
-});
-
-// @desc    Thêm sản phẩm mới (cho nhà phân phối hoặc admin)
-// @route   POST /api/products
-// @access  Private/DistributorOrAdmin
-const createProduct = asyncHandler(async (req, res) => {
-  if (req.user.role !== 'distributor' && req.user.role !== 'admin') {
-    res.status(403); // Forbidden
-    throw new Error('Không có quyền tạo sản phẩm');
-  }
-
-  const {
-    name,
-    description,
-    images, // Nên là một mảng các URL ảnh
-    category, // Nên là ID hoặc tên category đã chuẩn hóa
-    price,
-    countInStock,
-    original_id, // ID gốc từ CSV
-    origin,
-    producer,
-    short_description,
-    product_url,
-    ocop_rating,
-    brand // Thêm các trường khác nếu có trong form
-  } = req.body;
-
-  // Kiểm tra các trường bắt buộc
-  if (!name || !description || !category || price === undefined || countInStock === undefined || original_id === undefined) {
-    res.status(400); // Bad Request
-    throw new Error('Vui lòng cung cấp đủ thông tin bắt buộc: name, description, category, price, countInStock, original_id');
-  }
-
-  const product = new Product({
-    name,
-    description,
-    images: Array.isArray(images) ? images : (images ? [images] : []), // Đảm bảo images là mảng
-    category,
-    price: Number(price) || 0,
-    countInStock: Number(countInStock) || 0,
-    distributor: req.user._id, // Người tạo sản phẩm là nhà phân phối hiện tại
-    // user: req.user._id, // Cân nhắc trường này, thường distributor là đủ
-    original_id: Number(original_id), // Đảm bảo original_id là số nếu schema yêu cầu
-    origin,
-    producer,
-    short_description,
-    product_url,
-    ocop_rating: Number(ocop_rating) || null, // Đảm bảo là số hoặc null
-    brand
-  });
-
-  const createdProduct = await product.save();
-  res.status(201).json(createdProduct);
-});
-
-// @desc    Lấy sản phẩm của chính distributor hiện tại
-// @route   GET /api/products/my-products
-// @access  Private/DistributorOrAdmin
-const getMyProducts = asyncHandler(async (req, res) => {
-  console.log('--- Inside getMyProducts ---');
-  console.log('Logged-in user (req.user):', JSON.stringify(req.user, null, 2)); // Log chi tiết req.user
-  if (!req.user || (req.user.role !== 'distributor' && req.user.role !== 'admin')) {
-    console.log('User role check failed or user not found.');
-    res.status(403);
-    throw new Error('Chỉ nhà phân phối hoặc admin mới có quyền truy cập');
-  }
-
-  const distributorId = req.user._id;
-  console.log('Distributor ID for query:', distributorId);
-  console.log('Type of Distributor ID:', typeof distributorId); // Quan trọng: Kiểm tra kiểu dữ liệu
-
-  const filterConditions = { distributor: distributorId };
-  console.log('Filter conditions for MongoDB:', filterConditions);
-
-  const pageSize = parseInt(req.query.pageSize, 10) || 10;
-  const page = parseInt(req.query.page, 10) || 1;
-
-  try {
-    const count = await Product.countDocuments(filterConditions);
-    console.log(`Count of products found with filter: ${count}`);
-
-    const products = await Product.find(filterConditions)
-      .sort({ createdAt: -1 })
-      .limit(pageSize)
-      .skip(pageSize * (page - 1));
-    console.log(`Products retrieved (first page): ${products.length} items`);
-    // console.log('Retrieved products data:', JSON.stringify(products, null, 2)); // Bỏ comment để xem chi tiết sản phẩm
-
-    res.json({
-      products,
-      page,
-      pages: Math.ceil(count / pageSize),
-      count
-    });
-  } catch (dbError) {
-    console.error("Error during MongoDB query in getMyProducts:", dbError);
-    res.status(500).json({ message: "Lỗi truy vấn cơ sở dữ liệu." });
-  }
-});
-
-
-// @desc    Cập nhật sản phẩm
-// @route   PUT /api/products/:id
-// @access  Private/DistributorOrAdmin
-const updateProduct = asyncHandler(async (req, res) => {
-  const {
-    name, description, images, category, price, countInStock,
-    original_id, origin, producer, short_description, product_url, ocop_rating, brand,
-    // Thêm các trường khác bạn cho phép cập nhật
-  } = req.body;
-
-  if (!req.params.id.match(/^[0-9a-fA-F]{24}$/)) {
-      res.status(400);
-      throw new Error('ID sản phẩm không hợp lệ');
-  }
-  const product = await Product.findById(req.params.id);
-
-  if (!product) {
-    res.status(404);
-    throw new Error('Không tìm thấy sản phẩm');
-  }
-
-  // Chỉ admin hoặc chủ sở hữu sản phẩm mới được cập nhật
-  if (req.user.role !== 'admin' && product.distributor.toString() !== req.user._id.toString()) {
-    res.status(403);
-    throw new Error('Không có quyền cập nhật sản phẩm này');
-  }
-
-  // Cập nhật các trường nếu chúng được cung cấp trong request body
-  if (name !== undefined) product.name = name;
-  if (description !== undefined) product.description = description;
-  if (Array.isArray(images)) product.images = images; // Cho phép cập nhật mảng ảnh
-  if (category !== undefined) product.category = category;
-  if (price !== undefined && !isNaN(Number(price)) && Number(price) >= 0) product.price = Number(price);
-  if (countInStock !== undefined && !isNaN(Number(countInStock)) && Number(countInStock) >= 0) product.countInStock = Number(countInStock);
-  if (original_id !== undefined && !isNaN(Number(original_id))) product.original_id = Number(original_id);
-  if (origin !== undefined) product.origin = origin;
-  if (producer !== undefined) product.producer = producer;
-  if (short_description !== undefined) product.short_description = short_description;
-  if (product_url !== undefined) product.product_url = product_url;
-  if (ocop_rating !== undefined) product.ocop_rating = Number(ocop_rating) || null;
-  if (brand !== undefined) product.brand = brand;
-  // Cập nhật các trường khác tương tự
-
-  const updatedProduct = await product.save();
-  res.json(updatedProduct);
-});
-
-// @desc    Xóa sản phẩm
-// @route   DELETE /api/products/:id
-// @access  Private/DistributorOrAdmin
-const deleteProduct = asyncHandler(async (req, res) => {
-  if (!req.params.id.match(/^[0-9a-fA-F]{24}$/)) {
-      res.status(400);
-      throw new Error('ID sản phẩm không hợp lệ');
-  }
-  const product = await Product.findById(req.params.id);
-
-  if (!product) {
-    res.status(404);
-    throw new Error('Không tìm thấy sản phẩm');
-  }
-
-  if (req.user.role !== 'admin' && product.distributor.toString() !== req.user._id.toString()) {
-    res.status(403);
-    throw new Error('Không có quyền xóa sản phẩm này');
-  }
-
-  await Product.findByIdAndDelete(req.params.id); // Hoặc product.deleteOne() nếu dùng instance method
-  res.json({ message: 'Đã xóa sản phẩm' });
-});
-
-
-// @desc    Tìm kiếm & lọc sản phẩm (có phân trang, filter, sort)
-// @route   GET /api/products/search  (Hoặc bạn có thể dùng GET /api/products và tích hợp logic này vào getProducts)
-// @access  Public
-const searchProducts = asyncHandler(async (req, res) => {
-  // console.log('[BACKEND] /api/products/search received query:', req.query);
-
-  const page = Math.max(1, parseInt(req.query.pageNumber, 10) || 1);
-  const limit = parseInt(req.query.pageSize, 10) || 12; // Lấy pageSize từ query hoặc mặc định 12
+  const limit = parseInt(req.query.pageSize || req.query.per_page, 10) || 12;
   const skip = limit * (page - 1);
 
+  // --- Lọc và Sắp xếp ---
+  // Frontend (Vuex action fetchMainProducts) gửi: category, province, min_price, max_price, sort_by, keyword (nếu có)
   const {
-    keyword,
+    keyword,    // Cho tìm kiếm text
     category,
-    province, // Sẽ lọc theo product.origin
-    minPrice,
-    maxPrice,
-    rating,     // Rating từ review của sản phẩm
-    sortBy      // popular, newest, priceAsc, priceDesc
+    province,   // Sẽ lọc theo trường `origin` của Product model
+    rating,     // Lọc theo rating sản phẩm
   } = req.query;
+  const minPrice = req.query.min_price; // Nhận từ query string
+  const maxPrice = req.query.max_price; // Nhận từ query string
+  const sortBy = req.query.sort_by;     // Nhận từ query string
 
-  // --- Xây dựng filterConditions ---
+  // --- Xây dựng filterConditions cho MongoDB query ---
   const filterConditions = {};
 
+  // 1. Lọc theo Keyword (Text Search trên các trường đã index text)
   if (keyword) {
-    const regex = new RegExp(keyword, 'i');
-    filterConditions.$or = [
-      { name: regex },
-      { description: regex },
-      { category: regex }, // Giả sử category là string, nếu là ID thì cần xử lý khác
-      { producer: regex },
-      { origin: regex }
-    ];
+    // Sử dụng $text search nếu bạn đã tạo text index (ví dụ: trên name, category, description)
+    // productSchema.index({ name: 'text', category: 'text', description: 'text' });
+    filterConditions.$text = { $search: keyword };
+    // Nếu không dùng $text search, bạn có thể dùng regex trên nhiều trường:
+    // const regex = new RegExp(keyword, 'i');
+    // filterConditions.$or = [
+    //   { name: regex },
+    //   { description: regex },
+    //   { category: regex }
+    // ];
   }
 
+  // 2. Lọc theo Category (khớp chính xác hoặc chuỗi con, tùy bạn muốn)
   if (category) {
-    filterConditions.category = category; // Giả sử category là string khớp chính xác
+    // filterConditions.category = category; // Khớp chính xác (case-sensitive)
+    filterConditions.category = new RegExp(category, 'i'); // Khớp chuỗi con, không phân biệt hoa thường
   }
 
+  // 3. Lọc theo Province (dựa trên trường 'origin')
   if (province) {
-    filterConditions.origin = province; // Lọc theo trường origin của sản phẩm
+    filterConditions.origin = new RegExp(province, 'i'); // Khớp chuỗi con, không phân biệt hoa thường
   }
 
+  // 4. Lọc theo Khoảng giá
   const priceFilter = {};
   if (minPrice !== undefined && minPrice !== '' && !isNaN(Number(minPrice))) {
     priceFilter.$gte = Number(minPrice);
@@ -268,43 +65,142 @@ const searchProducts = asyncHandler(async (req, res) => {
     filterConditions.price = priceFilter;
   }
 
+  // 5. Lọc theo Rating (sản phẩm có rating >= giá trị truyền vào)
   if (rating !== undefined && rating !== '' && !isNaN(Number(rating))) {
-    filterConditions.rating = { $gte: Number(rating) }; // Lọc sản phẩm có rating >= giá trị truyền vào
+    filterConditions.rating = { $gte: Number(rating) };
   }
-
-  // --- Xây dựng sortOption ---
+  
+  // --- Xây dựng sortOption cho MongoDB query ---
   const sortOption = {};
   switch (sortBy) {
     case 'priceAsc':
-      sortOption.price = 1;
+      sortOption.price = 1; // Tăng dần
       break;
     case 'priceDesc':
-      sortOption.price = -1;
+      sortOption.price = -1; // Giảm dần
       break;
     case 'newest':
-      sortOption.createdAt = -1;
+      sortOption.createdAt = -1; // Mới nhất (dựa trên timestamp `createdAt`)
       break;
-    case 'popular': // Bạn cần định nghĩa "popular"
-      sortOption.sold = -1;         // Ví dụ: Bán chạy nhất
-      sortOption.numReviews = -1;   // Nhiều review nhất
-      sortOption.rating = -1;       // Rating cao nhất
+    case 'popular':
+      // Ưu tiên sắp xếp theo 'sold', sau đó 'numReviews', rồi 'rating'
+      if ('sold' in Product.schema.paths) sortOption.sold = -1;
+      else if ('numReviews' in Product.schema.paths) sortOption.numReviews = -1;
+      else if ('rating' in Product.schema.paths) sortOption.rating = -1;
+      else sortOption.createdAt = -1; // Fallback nếu không có trường nào rõ ràng
       break;
-    default: // Mặc định là mới nhất nếu sortBy không hợp lệ hoặc không có
+    default: // Mặc định sắp xếp theo mới nhất nếu sortBy không hợp lệ hoặc không có
       sortOption.createdAt = -1;
   }
-  // Luôn thêm _id để đảm bảo thứ tự ổn định khi các giá trị sort chính bằng nhau
-  if (Object.keys(sortOption)[0] !== '_id') { // Tránh thêm _id nếu đã sort theo _id
-      sortOption._id = 1; // Hoặc -1 tùy bạn muốn
+  // Thêm _id để đảm bảo thứ tự sắp xếp ổn định khi các giá trị chính bằng nhau
+  // và tránh trường hợp chỉ sort theo createdAt nếu không có sortBy nào khớp
+  if (Object.keys(sortOption).length === 0 || (Object.keys(sortOption).length === 1 && sortOption.createdAt)) {
+    // Nếu chỉ có createdAt hoặc không có sort gì, thêm _id
+    if(Object.keys(sortOption)[0] !== '_id') sortOption._id = 1; // Hoặc -1
+  } else if (Object.keys(sortOption)[0] !== '_id' && Object.keys(sortOption).length > 0) {
+     sortOption._id = 1; // Thêm vào các trường hợp sort khác
   }
 
 
   try {
+    // console.log("[BACKEND] getProducts - filterConditions:", JSON.stringify(filterConditions));
+    // console.log("[BACKEND] getProducts - sortOption:", JSON.stringify(sortOption));
+
     const count = await Product.countDocuments(filterConditions);
     const products = await Product.find(filterConditions)
       .sort(sortOption)
       .limit(limit)
       .skip(skip)
-      .populate('distributor', 'name distributorInfo.companyName'); // Chỉ populate những trường cần thiết
+      .populate('distributor', 'name'); // Chỉ lấy tên nhà phân phối
+
+    res.json({
+      products,
+      page,
+      pages: Math.ceil(count / limit), // Tổng số trang
+      count // Tổng số sản phẩm khớp với điều kiện lọc
+    });
+  } catch (error) {
+    console.error("Error in getProducts (merged logic):", error);
+    res.status(500).json({ message: "Lỗi máy chủ khi lấy danh sách sản phẩm." });
+  }
+});
+
+// @desc    Lấy một sản phẩm theo ID
+// @route   GET /api/products/:id
+// @access  Public
+const getProductById = asyncHandler(async (req, res) => {
+  if (!req.params.id.match(/^[0-9a-fA-F]{24}$/)) {
+      res.status(400);
+      throw new Error('ID sản phẩm không hợp lệ');
+  }
+  const product = await Product.findById(req.params.id)
+    .populate('distributor', 'name') // Lấy tên nhà phân phối
+    .populate('reviews.user', 'name'); // Lấy tên người review
+
+  if (!product) {
+    res.status(404);
+    throw new Error('Không tìm thấy sản phẩm');
+  }
+  res.json(product);
+});
+
+// @desc    Thêm sản phẩm mới
+// @route   POST /api/products
+// @access  Private/Distributor (Hoặc Admin nếu middleware authorize cho phép)
+const createProduct = asyncHandler(async (req, res) => {
+  // Middleware `protect` đã cung cấp req.user
+  // Middleware `distributor` (hoặc `authorize(['distributor', 'admin'])`) đã kiểm tra quyền
+  const {
+    name, description, images, category, price, countInStock,
+    original_id, origin, producer, short_description, product_url, ocop_rating, brand
+  } = req.body;
+
+  if (!name || !description || !category || price === undefined || countInStock === undefined || original_id === undefined) {
+    res.status(400);
+    throw new Error('Vui lòng cung cấp đủ thông tin bắt buộc: name, description, category, price, countInStock, original_id');
+  }
+  // Kiểm tra original_id đã tồn tại chưa (vì nó là unique)
+  const existingProductByOriginalId = await Product.findOne({ original_id: Number(original_id) });
+  if (existingProductByOriginalId) {
+      res.status(400);
+      throw new Error(`Sản phẩm với original_id ${original_id} đã tồn tại.`);
+  }
+
+  const product = new Product({
+    name, description,
+    images: Array.isArray(images) ? images : (images ? [images] : []),
+    category,
+    price: Number(price),
+    countInStock: Number(countInStock),
+    distributor: req.user._id, // Người tạo sản phẩm
+    original_id: Number(original_id),
+    origin, producer, short_description, product_url,
+    ocop_rating: ocop_rating ? Number(ocop_rating) : null,
+    brand
+  });
+
+  const createdProduct = await product.save();
+  res.status(201).json(createdProduct);
+});
+
+// @desc    Lấy sản phẩm của chính distributor hiện tại
+// @route   GET /api/products/my-products
+// @access  Private/Distributor (Hoặc Admin nếu middleware authorize cho phép)
+const getMyProducts = asyncHandler(async (req, res) => {
+  const distributorId = req.user._id;
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = parseInt(req.query.pageSize, 10) || 10; // pageSize từ FE
+  const skip = limit * (page - 1);
+
+  const filterConditions = { distributor: distributorId };
+
+  try {
+    const count = await Product.countDocuments(filterConditions);
+    const products = await Product.find(filterConditions)
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .skip(skip);
+      // Không cần populate distributor nữa vì đã lọc theo distributorId
 
     res.json({
       products,
@@ -312,13 +208,99 @@ const searchProducts = asyncHandler(async (req, res) => {
       pages: Math.ceil(count / limit),
       count
     });
-  } catch (error) {
-    console.error("Error in searchProducts:", error);
-    res.status(500).json({ message: "Lỗi máy chủ khi tìm kiếm sản phẩm." });
+  } catch (dbError) {
+    console.error("Error during MongoDB query in getMyProducts:", dbError);
+    res.status(500).json({ message: "Lỗi truy vấn cơ sở dữ liệu." });
   }
 });
 
-// Export các hàm controllers
+
+// @desc    Cập nhật sản phẩm
+// @route   PUT /api/products/:id
+// @access  Private/Distributor (Hoặc Admin)
+const updateProduct = asyncHandler(async (req, res) => {
+  const {
+    name, description, images, category, price, countInStock,
+    original_id, origin, producer, short_description, product_url, ocop_rating, brand,
+  } = req.body;
+
+  if (!req.params.id.match(/^[0-9a-fA-F]{24}$/)) {
+      res.status(400); throw new Error('ID sản phẩm không hợp lệ');
+  }
+  const product = await Product.findById(req.params.id);
+
+  if (!product) {
+    res.status(404); throw new Error('Không tìm thấy sản phẩm');
+  }
+
+  // Chỉ admin hoặc chủ sở hữu (distributor) sản phẩm mới được cập nhật
+  if (req.user.role !== 'admin' && product.distributor.toString() !== req.user._id.toString()) {
+    res.status(403); throw new Error('Không có quyền cập nhật sản phẩm này');
+  }
+
+  // Cập nhật các trường
+  product.name = name ?? product.name;
+  product.description = description ?? product.description;
+  if (Array.isArray(images)) product.images = images; // Chỉ cập nhật nếu images là mảng (cho phép xóa hết ảnh nếu gửi mảng rỗng)
+  else if (images === null || images === '') product.images = []; // Xóa hết ảnh nếu gửi null hoặc rỗng
+  
+  product.category = category ?? product.category;
+  if (price !== undefined) product.price = Number(price);
+  if (countInStock !== undefined) product.countInStock = Number(countInStock);
+  
+  // Cẩn thận khi cập nhật original_id nếu nó là unique
+  if (original_id !== undefined && Number(original_id) !== product.original_id) {
+    const existing = await Product.findOne({ original_id: Number(original_id), _id: { $ne: product._id } });
+    if (existing) {
+        res.status(400); throw new Error(`original_id ${original_id} đã được sử dụng bởi sản phẩm khác.`);
+    }
+    product.original_id = Number(original_id);
+  }
+
+  product.origin = origin ?? product.origin;
+  product.producer = producer ?? product.producer;
+  product.short_description = short_description ?? product.short_description;
+  product.product_url = product_url ?? product.product_url;
+  if (ocop_rating !== undefined) product.ocop_rating = Number(ocop_rating) || null;
+  product.brand = brand ?? product.brand;
+
+  const updatedProduct = await product.save();
+  res.json(updatedProduct);
+});
+
+// @desc    Xóa sản phẩm
+// @route   DELETE /api/products/:id
+// @access  Private/Distributor (Hoặc Admin)
+const deleteProduct = asyncHandler(async (req, res) => {
+  if (!req.params.id.match(/^[0-9a-fA-F]{24}$/)) {
+      res.status(400); throw new Error('ID sản phẩm không hợp lệ');
+  }
+  const product = await Product.findById(req.params.id);
+
+  if (!product) {
+    res.status(404); throw new Error('Không tìm thấy sản phẩm');
+  }
+
+  if (req.user.role !== 'admin' && product.distributor.toString() !== req.user._id.toString()) {
+    res.status(403); throw new Error('Không có quyền xóa sản phẩm này');
+  }
+
+  await Product.deleteOne({ _id: product._id }); // Sử dụng deleteOne trên model
+  res.json({ message: 'Đã xóa sản phẩm' });
+});
+
+// Hàm searchProducts có thể được loại bỏ nếu getProducts đã bao gồm tìm kiếm keyword
+// Hoặc bạn có thể giữ nó cho một loại tìm kiếm phức tạp hơn (ví dụ: full-text search mạnh mẽ hơn)
+// Hiện tại, tôi sẽ comment nó ra vì getProducts đã có lọc theo keyword (nếu bạn dùng $text index).
+/*
+const searchProducts = asyncHandler(async (req, res) => {
+  // ... (Logic cũ của bạn cho /api/products/search nếu muốn giữ)
+  // Nếu giữ, đảm bảo nó khác với getProducts, ví dụ chỉ tập trung vào text search
+  // và có thể không cần tất cả các filter/sort khác.
+  res.status(501).json({ message: "Search endpoint not fully implemented, use GET /api/products with query params."})
+});
+*/
+
 module.exports = {
   getProducts,
   getProductById,
@@ -326,5 +308,5 @@ module.exports = {
   getMyProducts,
   updateProduct,
   deleteProduct,
-  searchProducts 
+  // searchProducts, // Bỏ comment nếu bạn vẫn muốn dùng route /api/products/search riêng
 };

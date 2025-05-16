@@ -11,7 +11,7 @@ const populateCart = (cart) => {
   }
   return cart.populate({
     path: 'items.product',
-    select: 'name price images countInStock' // Lấy đủ thông tin cần thiết
+    select: 'name price images countInStock _id original_id' // Lấy đủ thông tin cần thiết
   });
 };
 
@@ -21,18 +21,22 @@ const populateCart = (cart) => {
 const getCart = asyncHandler(async (req, res) => {
   let cart = await Cart.findOne({ user: req.user._id });
 
-  if (!cart) {
-    // Nếu chưa có giỏ hàng, tạo mới và trả về giỏ hàng rỗng
-    cart = await Cart.create({
-      user: req.user._id,
-      items: [],
-      // totalPrice sẽ tự động là 0 do schema default và pre-save hook
-    });
-    // Không cần populate vì items rỗng
-    res.json(cart);
-  } else {
-     // Populate sản phẩm trong giỏ hàng nếu đã tồn tại
-     const populatedCart = await populateCart(cart);
+  if (!cart) { /* ... tạo cart mới ... */ } 
+  else {
+     let populatedCart = await populateCart(cart); // populateCart chỉ làm nhiệm vụ populate
+
+     // Lọc ra các item không hợp lệ (product là null sau khi populate)
+     const validItems = populatedCart.items.filter(item => item.product !== null);
+
+     if (validItems.length !== populatedCart.items.length) {
+         // Nếu có item bị loại bỏ, cập nhật lại giỏ hàng trong DB
+         console.warn(`User ${req.user._id}: Cart contained invalid items that were removed.`);
+         populatedCart.items = validItems;
+         // totalPrice sẽ được tính lại bởi pre-save hook khi .save() được gọi
+         populatedCart = await populatedCart.save(); 
+         // Populate lại lần nữa để đảm bảo client nhận được đúng cấu trúc (nếu .save() không tự populate)
+         populatedCart = await populateCart(populatedCart);
+     }
      res.json(populatedCart);
   }
 });

@@ -1,4 +1,3 @@
-// import.js
 const fs       = require('fs');
 const path     = require('path');
 const csv      = require('csv-parser');
@@ -79,7 +78,7 @@ const productSchema = new mongoose.Schema({
   origin:       String,
   category:     String,
   price:        { type: Number, default: 0 },
-  countInStock: { type: Number, default: 0 },
+  countInStock: { type: Number, default: 10 },
   rating:       { type: Number, default: 0 },
   numReviews:   { type: Number, default: 0 },
   reviews:      [mongoose.Schema.Types.Mixed],
@@ -98,7 +97,7 @@ async function main() {
   }
 
   await mongoose.connect(MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true });
-  console.log('🌐 Đã kết nối MongoDB');
+  console.log(' Đã kết nối MongoDB');
 
   let count = 0;
   const stream = fs.createReadStream(CSV_PATH)
@@ -160,7 +159,7 @@ async function main() {
     count++;
   }
 
-  console.log(`✅ Hoàn tất import: ${count} sản phẩm được xử lý.`);
+  console.log(` Hoàn tất import: ${count} sản phẩm được xử lý.`);
   await mongoose.disconnect();
   process.exit(0);
 }

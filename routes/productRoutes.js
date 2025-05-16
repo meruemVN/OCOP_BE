@@ -1,3 +1,4 @@
+// routes/productRoutes.js
 const express = require('express');
 const router = express.Router();
 const {
@@ -7,20 +8,29 @@ const {
   getMyProducts,
   updateProduct,
   deleteProduct,
-  searchProducts,
 } = require('../controllers/productController');
-const { protect, distributor, admin } = require('../middlewares/authMiddleware');
+const { protect, authorize } = require('../middlewares/authMiddleware'); 
 
-router.get('/my-products', protect, distributor, getMyProducts);
+// --- Public Routes ---
+router.get('/', getProducts); 
 
-// Public routes
-router.get('/', getProducts); // Lấy tất cả sản phẩm
-router.get('/search', searchProducts); // Tìm kiếm sản phẩm
-router.get('/:id', getProductById); // Lấy chi tiết sản phẩm
+// --- Protected Routes (Cụ thể hơn) ---
+// Đặt route cụ thể /my-products TRƯỚC route động /:id
+router.get('/my-products', protect, authorize(['distributor', 'admin']), getMyProducts); 
 
-// Distributor/Admin routes
-router.post('/', protect, distributor, createProduct); // Thêm sản phẩm mới
-router.put('/:id', protect, distributor, updateProduct); // Cập nhật sản phẩm
-router.delete('/:id', protect, distributor, deleteProduct); // Xóa sản phẩm
+// --- Public Route (Động - phải đứng sau các route public/protected cụ thể hơn có cùng tiền tố) ---
+// GET /api/products/:id -> Lấy chi tiết sản phẩm
+router.get('/:id', getProductById);
+
+
+// --- Protected Routes (Cho việc tạo, cập nhật, xóa) ---
+// POST /api/products (Trùng với GET /, nhưng method khác nhau nên Express xử lý được)
+router.post('/', protect, authorize(['distributor', 'admin']), createProduct);
+
+// PUT /api/products/:id 
+router.put('/:id', protect, authorize(['distributor', 'admin']), updateProduct);
+
+// DELETE /api/products/:id
+router.delete('/:id', protect, authorize(['distributor', 'admin']), deleteProduct);
 
 module.exports = router;
