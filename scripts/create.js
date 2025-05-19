@@ -146,7 +146,9 @@ async function main() {
       origin:       row.origin,
       category:     row.category || 'Đặc sản miền Trung',
       price:        row.price ? Number(row.price) : 0,
-      countInStock: row.countInStock ? Number(row.countInStock) : 0,
+      countInStock: (row.countInStock !== null && typeof row.countInStock !== 'undefined' && !isNaN(parseFloat(row.countInStock)))
+                      ? Number(row.countInStock)
+                      : 10,
       distributor:  distributorId
     };
 

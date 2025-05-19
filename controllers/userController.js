@@ -19,86 +19,120 @@ const generateToken = (id) => {
 // @route   POST /api/users/register (Hoặc /api/users)
 // @access  Public
 const registerUser = asyncHandler(async (req, res) => {
-  const { name, email, password, phone, address } = req.body;
+  // Log dữ liệu nhận được từ client
+  console.log('[REGISTER USER CTRL] Request body:', req.body); 
+  const { name, email, password, phone, address /*, các trường khác nếu có */ } = req.body;
 
-  // Validation cơ bản (nên dùng express-validator cho đầy đủ hơn)
   if (!name || !email || !password) {
     res.status(400);
     throw new Error('Vui lòng cung cấp tên, email và mật khẩu.');
   }
 
+  console.log('[REGISTER USER CTRL] Checking if user exists with email:', email);
   const userExists = await User.findOne({ email });
 
   if (userExists) {
+    console.log('[REGISTER USER CTRL] User already exists.');
     res.status(400);
     throw new Error('Email đã được sử dụng');
   }
 
-  const user = await User.create({
-    name,
-    email,
-    password, // Password sẽ được hash bởi pre-save hook
-    phone,
-    address,
-    // role mặc định là 'user', isActive mặc định là true (theo schema)
-  });
-
-  if (user) {
-    const token = generateToken(user._id);
-    // Thiết lập cookie nếu cần (giống login)
-    res.cookie('token', token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV !== 'development',
-      sameSite: 'strict',
-      maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
+  console.log('[REGISTER USER CTRL] Attempting to create user...');
+  try {
+    const user = await User.create({
+      name,
+      email,
+      password, 
+      phone,    // Đảm bảo schema cho phép phone ở đây
+      address,  // Đảm bảo schema cho phép address ở đây và đúng định dạng
+      // role: 'user' // Mặc định trong schema
     });
+    console.log('[REGISTER USER CTRL] User created successfully:', user._id);
 
-    res.status(201).json({
-      _id: user._id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      phone: user.phone,
-      address: user.address,
-      token: token, // Trả token trong body
-    });
-  } else {
-    res.status(400);
-    throw new Error('Dữ liệu người dùng không hợp lệ');
+    if (user) {
+      const token = generateToken(user._id);
+      if (!token) { // generateToken có thể throw lỗi nếu JWT_SECRET thiếu
+           console.error("[REGISTER USER CTRL] Failed to generate token!");
+           res.status(500);
+           throw new Error("Lỗi tạo token xác thực.");
+      }
+      
+      // ... (res.cookie và res.status(201).json) ...
+      // Đảm bảo payload trả về khớp với những gì AUTH_SUCCESS mutation mong đợi
+      res.status(201).json({
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        phone: user.phone,     // Trả về nếu bạn lưu và muốn client có
+        address: user.address, // Trả về nếu bạn lưu và muốn client có
+        token: token,
+      });
+
+    } else { // Trường hợp User.create không thành công nhưng không throw lỗi (ít khả năng)
+      console.error('[REGISTER USER CTRL] User.create did not return a user but did not throw.');
+      res.status(400);
+      throw new Error('Dữ liệu người dùng không hợp lệ sau khi tạo.');
+    }
+  } catch (creationError) {
+      // Log lỗi chi tiết từ User.create hoặc generateToken
+      console.error('[REGISTER USER CTRL] Error during User.create or token generation:', creationError);
+      // Kiểm tra xem có phải lỗi validation của Mongoose không
+      if (creationError.name === 'ValidationError') {
+          res.status(400);
+          // Lấy thông điệp lỗi validation cụ thể hơn
+          const messages = Object.values(creationError.errors).map(val => val.message);
+          throw new Error(`Lỗi validation: ${messages.join(', ')}`);
+      }
+      res.status(500); // Lỗi server khác
+      throw new Error(creationError.message || 'Lỗi không xác định khi tạo người dùng.');
   }
 });
 
 // @desc    Đăng nhập người dùng
 // @route   POST /api/users/login
 // @access  Public
+// userController.js
 const loginUser = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
+  console.log(`[LOGIN CTRL] Attempting login for email: ${email}`);
 
   if (!email || !password) {
       res.status(400);
       throw new Error('Vui lòng cung cấp email và mật khẩu.');
   }
 
-  const user = await User.findOne({ email });
+  // >>> THÊM .select('+password') VÀO ĐÂY <<<
+  const user = await User.findOne({ email }).select('+password'); 
 
-  if (user && (await user.matchPassword(password))) {
-    // Kiểm tra tài khoản có hoạt động không
+  if (!user) {
+      console.log(`[LOGIN CTRL] User not found for email: ${email}`);
+      res.status(401);
+      throw new Error('Email hoặc mật khẩu không đúng');
+  }
+  console.log(`[LOGIN CTRL] User found: ${user.name}, isActive: ${user.isActive}`);
+  // console.log(`[LOGIN CTRL] User object with password (should exist now):`, user); // Để debug xem user có password không
+
+  // Bây giờ user.password sẽ có giá trị (nếu tồn tại trong DB)
+  const isMatch = await user.matchPassword(password); 
+  console.log(`[LOGIN CTRL] Password match result for ${email}: ${isMatch}`); // Mong đợi true hoặc false
+
+  if (isMatch) {
     if (!user.isActive) {
-      res.status(401); // Unauthorized or Forbidden (403) có thể hợp lý hơn
+      console.log(`[LOGIN CTRL] User ${email} is not active.`);
+      res.status(401); 
       throw new Error('Tài khoản đã bị vô hiệu hóa');
     }
 
+    console.log(`[LOGIN CTRL] Login successful for ${email}. Generating token...`);
     const token = generateToken(user._id);
+    if (!token) {
+           console.error("[LOGIN CTRL] Failed to generate token!");
+           res.status(500);
+           throw new Error("Lỗi tạo token xác thực.");
+    }
 
-    // Thiết lập httpOnly cookie
-    res.cookie('token', token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV !== 'development',
-      sameSite: 'strict',
-      maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
-    });
-
-    // Trả về thông tin user và token trong body
+    res.cookie('token', token, { /* ... cookie options ... */ });
     res.json({
       _id: user._id,
       name: user.name,
@@ -106,11 +140,12 @@ const loginUser = asyncHandler(async (req, res) => {
       role: user.role,
       phone: user.phone,
       address: user.address,
-      distributorInfo: user.distributorInfo, // Trả về cả thông tin distributor nếu có
+      distributorInfo: user.distributorInfo,
       token: token,
     });
   } else {
-    res.status(401); // Unauthorized
+    console.log(`[LOGIN CTRL] Password mismatch for ${email}.`);
+    res.status(401); 
     throw new Error('Email hoặc mật khẩu không đúng');
   }
 });

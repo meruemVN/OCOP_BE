@@ -1,24 +1,42 @@
 const recommenderService = require('../services/recommender.service');
 const asyncHandler = require('express-async-handler'); 
 const Order = require('../models/Order');
+const Product = require('../models/Product');
 
 // --- Helper Function để lấy lịch sử tương tác (VÍ DỤ - BẠN CẦN THAY THẾ LOGIC THỰC) ---
 async function getUserInteractionHistory(userId) {
     try {
-        const orders = await Order.find({ user: userId }).select('orderItems.original_id').lean();
+        const orders = await Order.find({ user: userId }).select('orderItems.product').lean();
+
         if (!orders || orders.length === 0) return [];
-        const interactedOriginalProductIds = new Set();
+
+        const productObjectIds = new Set();
         orders.forEach(order => {
             order.orderItems?.forEach(item => {
-                if (item.original_id !== undefined && item.original_id !== null) {
-                    interactedOriginalProductIds.add(String(item.original_id));
-                }
+                if (item.product) productObjectIds.add(item.product); // Giữ lại ObjectId
             });
         });
-        return Array.from(interactedOriginalProductIds);
+
+        if (productObjectIds.size === 0) return [];
+
+        // Truy vấn Product collection để lấy original_id tương ứng
+        const productsWithOriginalId = await Product.find({ 
+            '_id': { $in: Array.from(productObjectIds) } 
+        }).select('original_id').lean();
+
+        const interactedOriginalIds = new Set();
+        productsWithOriginalId.forEach(p => {
+            if (p.original_id !== null && p.original_id !== undefined) {
+                interactedOriginalIds.add(String(p.original_id)); // Chuyển original_id sang string
+            }
+        });
+        
+        const uniqueOriginalPids = Array.from(interactedOriginalIds);
+        console.log(`[RecController getUserInteractionHistory] Returning original_ids for ${userId}:`, uniqueOriginalPids);
+        return uniqueOriginalPids;
 
     } catch (error) {
-        console.error(`[RecController] Error fetching interaction history for ${userId}:`, error);
+        console.error(`[RecController] Error fetching interaction history (original_ids) for ${userId}:`, error);
         return []; 
     }
 }
@@ -49,38 +67,38 @@ exports.getRecommendationsForProduct = async (req, res) => {
 };
 
 exports.getRecommendationsForUser = asyncHandler(async (req, res) => {
-    // const userId = req.user._id; // Nếu bạn muốn gợi ý cho người dùng đang đăng nhập
-    const { userId } = req.params; // Nếu bạn muốn admin hoặc người khác có thể gọi cho một user cụ thể
-                                 // Trong trường hợp này, cần kiểm tra quyền nếu userId !== req.user._id
-    const topN = req.query.top_n ? parseInt(req.query.top_n, 10) : 10;
+    const { userId } = req.params;
+    const topN = req.query.top_n ? parseInt(req.query.top_n, 10) : 8; // Lấy topN từ query hoặc mặc định
+    console.log(`[NODE CTRL getRecsUser] Request for userId: ${userId}, topN: ${topN}`);
 
-    if (!userId) {
-        res.status(400); // Bad Request
-        throw new Error('User ID is required to get recommendations.');
-    }
-    if (isNaN(topN) || topN <= 0 || topN > 50) { // Giới hạn topN
-        res.status(400);
-        throw new Error('Invalid top_n parameter. Must be a positive integer (1-50).');
-    }
-
-    // Lấy lịch sử tương tác (mua hàng) của người dùng
     const interactedPids = await getUserInteractionHistory(userId);
-    // interactedPids là mảng các product_id (dạng chuỗi)
+    console.log(`[NODE CTRL getRecsUser] Interacted PIDs for ${userId}:`, interactedPids);
 
-    const result = await recommenderService.getUserRecommendations(userId.toString(), topN, interactedPids);
+    // Gọi service Node.js, service này sẽ gọi script Python
+    const resultFromPython = await recommenderService.getUserRecommendations(userId.toString(), topN, interactedPids);
+    
+    // >>> LOG QUAN TRỌNG NHẤT <<<
+    console.log(`[NODE CTRL getRecsUser] Result from Python Service for ${userId}:`, JSON.stringify(resultFromPython, null, 2));
 
-    if (result.error) {
-        console.warn(`[RecController] UserRec Error from service for ${userId}:`, result.error, result.trace || '');
-        if (result.message && (result.recommendations && result.recommendations.length === 0)) {
-             return res.status(200).json({ recommendations: [], message: result.message });
-        }
-        // Dựa vào nội dung lỗi từ Python để quyết định status code phù hợp hơn
-        const errorMsg = String(result.error).toLowerCase();
-        if (errorMsg.includes("not found") || errorMsg.includes("no interaction history")) return res.status(404).json({ error: result.error, recommendations: [] }); // Not found
-        return res.status(400).json({ error: result.error }); // Bad request (e.g. invalid input to Python)
+    if (!interactedPids || interactedPids.length === 0) { // Kiểm tra lại điều kiện này
+        console.warn(`[NODE CTRL getRecsUser] INTERACTION HISTORY IS EMPTY for ${userId}. Python will use cold start.`);
+        // Nếu ở đây rỗng, thì getUserInteractionHistory có vấn đề
     }
     
-    res.status(200).json({ recommendations: result.recommendations || [] });
+    if (resultFromPython && resultFromPython.error) {
+        console.warn(`[NODE CTRL getRecsUser] Error from Python Service:`, resultFromPython.error);
+        // ... (xử lý lỗi và return)
+        return res.status(400).json({ error: resultFromPython.error, recommendations: [] });
+    }
+    
+    // Đảm bảo trả về đúng cấu trúc dù resultFromPython.recommendations có thể undefined
+    const recommendationsToSend = resultFromPython?.recommendations || [];
+    const messageToSend = resultFromPython?.message || (recommendationsToSend.length === 0 ? "Không tìm thấy gợi ý phù hợp." : undefined);
+
+    res.status(200).json({ 
+        recommendations: recommendationsToSend,
+        ...(messageToSend && { message: messageToSend }) // Chỉ thêm message nếu có
+    });
 });
 
 exports.listProducts = async (req, res) => {

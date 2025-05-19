@@ -11,28 +11,38 @@ function runPythonScript(args) {
             env: { ...process.env, PYTHONIOENCODING: 'UTF-8' },
         };
 
-        // console.log(`[Service] Executing: ${PYTHON_INTERPRETER} "${SCRIPT_PATH}" ${args.join(' ')}`);
+        // console.log(`[Service runPythonScript] Executing: ${PYTHON_INTERPRETER} "${SCRIPT_PATH}" ${args.join(' ')}`);
         const pyProcess = spawn(PYTHON_INTERPRETER, [SCRIPT_PATH, ...args], options);
 
         let resultJson = '';
         let errorOutput = '';
 
-        pyProcess.stdout.on('data', (data) => { resultJson += data.toString('utf8'); });
-        pyProcess.stderr.on('data', (data) => { errorOutput += data.toString('utf8'); });
+        pyProcess.stdout.on('data', (data) => {
+            // console.log(`[Service runPythonScript STDOUT for ${args[0]}]: RAW CHUNK ->`, data); // Log raw buffer
+            resultJson += data.toString('utf8');
+            // console.log(`[Service runPythonScript STDOUT for ${args[0]}]: ACCUMULATED ->`, resultJson);
+        });
+        pyProcess.stderr.on('data', (data) => {
+            // console.log(`[Service runPythonScript STDERR for ${args[0]}]: RAW CHUNK ->`, data);
+            errorOutput += data.toString('utf8');
+            // console.log(`[Service runPythonScript STDERR for ${args[0]}]: ACCUMULATED ->`, errorOutput);
+        });
 
         pyProcess.on('close', (code) => {
-            if (errorOutput.trim()) { // Luôn log stderr nếu có nội dung
+            // console.log(`[Service runPythonScript CLOSE for ${args[0]}] Exit code: ${code}`);
+            // console.log(`[Service runPythonScript CLOSE for ${args[0]}] Final accumulated stdout (resultJson):`, resultJson);
+            // console.log(`[Service runPythonScript CLOSE for ${args[0]}] Final accumulated stderr (errorOutput):`, errorOutput);
+
+            if (errorOutput.trim()) {
                 console.warn(`[Service] Python script stderr (${args[0]}): ${errorOutput.substring(0, 1000)}`);
             }
             if (code !== 0) {
                 console.error(`[Service] Python script execution failed with code ${code} for command ${args[0]}.`);
                 try {
-                    // Cố gắng parse lỗi từ stderr nếu nó là JSON
                     const pyError = JSON.parse(errorOutput.trim());
-                    return reject(pyError); // {error: "message from python", trace: "..."}
+                    return reject(pyError);
                 } catch (e) {
-                    // Nếu stderr không phải JSON, trả về lỗi chung
-                    return reject({ error: `Python script failed (code ${code}) for ${args[0]}. Output: ${errorOutput.substring(0, 500)}` });
+                    return reject({ error: `Python script failed (code ${code}) for ${args[0]}. Stderr: ${errorOutput.substring(0, 500)}` });
                 }
             }
             try {
@@ -46,10 +56,12 @@ function runPythonScript(args) {
                     }
                     return resolve({});
                 }
+                // console.log(`[Service runPythonScript Before Parse for ${args[0]}] Attempting to parse stdout:`, resultJson);
                 const jsonData = JSON.parse(resultJson);
+                // console.log(`[Service runPythonScript After Parse for ${args[0]}] Parsed JSON:`, jsonData);
                 resolve(jsonData);
             } catch (parseError) {
-                console.error(`[Service] Error parsing JSON from Python (${args[0]}):`, parseError, '\nRaw output:', resultJson.substring(0, 500));
+                console.error(`[Service] Error parsing JSON from Python (${args[0]}):`, parseError.message, '\nRaw output was:', resultJson.substring(0, 1000));
                 reject({ error: `Failed to parse JSON from Python script for ${args[0]}.`, details: resultJson.substring(0,200) });
             }
         });
@@ -61,25 +73,23 @@ function runPythonScript(args) {
 }
 
 class RecommenderService {
-    /**
-     * Lấy gợi ý dựa trên sản phẩm (item-to-item precomputed).
-     */
     async getRecommendations(productId, topN = 10) {
         if (!productId) return Promise.reject({ error: 'Product ID is required for getRecommendations.' });
         const args = ['get_recommendations', '--product_id', String(productId), '--top_n', String(topN)];
-        return runPythonScript(args); // Python trả về { product_id_input: ..., recommendations: [...] } hoặc { error: ...}
+        return runPythonScript(args);
     }
 
-    /**
-     * Lấy gợi ý cho người dùng dựa trên Content-Based Filtering động.
-     * @param {string} userId - ID của người dùng.
-     * @param {number} topN - Số lượng gợi ý.
-     * @param {string[]} interactedProductIds - Mảng các product_id (dạng chuỗi) user đã tương tác.
-     */
     async getUserRecommendations(userId, topN = 10, interactedProductIds = []) {
+        // ***** LỖI ĐÃ ĐƯỢC XÓA Ở ĐÂY *****
+        // pyProcess.stdout.on('data', (data) => { ... }); // Dòng này và dòng stderr dưới đã bị xóa
+        // pyProcess.stderr.on('data', (data) => { ... });
+        // ***** KẾT THÚC PHẦN XÓA *****
+
         if (!userId) return Promise.reject({ error: 'User ID is required for getUserRecommendations.' });
         
-        const interactedProductIdsJson = JSON.stringify(interactedProductIds || []); // Đảm bảo là mảng và chuyển sang chuỗi JSON
+        console.log(`[NODE SERVICE getUserRecommendations] Received interactedProductIds (array):`, interactedProductIds);
+        const interactedProductIdsJson = JSON.stringify(interactedProductIds || []);
+        console.log(`[NODE SERVICE getUserRecommendations] Sending --interacted_product_ids (JSON string): ${interactedProductIdsJson}`);
 
         const args = [
             'get_user_recommendations', 
@@ -87,37 +97,32 @@ class RecommenderService {
             '--top_n', String(topN),
             '--interacted_product_ids', interactedProductIdsJson 
         ];
-        return runPythonScript(args); // Python trả về { user_id_input: ..., recommendations: [...] } hoặc { error: ...}
+        return runPythonScript(args);
     }
 
-    /**
-     * Lấy danh sách sản phẩm với phân trang, lọc và sắp xếp.
-     */
     async getProducts(options = {}) {
-        const {
-            page = 1,
-            perPage = 20,
-            category,
-            province,
-            minPrice, // Node.js controller sẽ gửi minPrice
-            maxPrice, // Node.js controller sẽ gửi maxPrice
-            sortBy    // Node.js controller sẽ gửi sortBy
-        } = options;
+        const { /* ... params ... */ } = options;
+        // ... (logic tạo args như cũ)
+        const args = [ /* ... */ ]; // Giữ nguyên logic tạo args của bạn
+        // (Logic tạo args đầy đủ đã có ở các câu trả lời trước)
+        const page = options.page || 1;
+        const perPage = options.perPage || 12; // Sửa từ per_page ở đây để khớp với controller
+        const { category, province, minPrice, maxPrice, sortBy, keyword } = options;
 
-        const args = [
+        const finalArgs = [
             'get_products',
             '--page', String(page),
-            '--per_page', String(perPage) // Script Python nhận --per_page
+            '--per_page', String(perPage)
         ];
         
-        if (category) args.push('--category', category);
-        if (province) args.push('--province', province);
-        // Script Python nhận --min_price, --max_price
-        if (minPrice !== undefined && minPrice !== null) args.push('--min_price', String(minPrice));
-        if (maxPrice !== undefined && maxPrice !== null) args.push('--max_price', String(maxPrice));
-        if (sortBy) args.push('--sort_by', sortBy); // Script Python nhận --sort_by
+        if (category) finalArgs.push('--category', category);
+        if (province) finalArgs.push('--province', province);
+        if (minPrice !== undefined && minPrice !== null) finalArgs.push('--min_price', String(minPrice));
+        if (maxPrice !== undefined && maxPrice !== null) finalArgs.push('--max_price', String(maxPrice));
+        if (sortBy) finalArgs.push('--sort_by', sortBy);
+        if (keyword) finalArgs.push('--keyword', keyword); // Thêm keyword nếu controller gửi
 
-        return runPythonScript(args); // Python trả về { products: [...], count: ..., page: ..., pages: ...} hoặc { error: ...}
+        return runPythonScript(finalArgs);
     }
 }
 

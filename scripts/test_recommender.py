@@ -15,8 +15,8 @@ if __name__ == "__main__":
         load_artifacts() 
         print("Artifacts loading process completed (or attempted).", file=sys.stderr)
 
-        test_user_id = "67fe1b494365124f151881f0" 
-        test_interacted_pids = ["12731"] 
+        test_user_id = "682b03b5d3e2c70fecc869e4" 
+        test_interacted_pids = ["26174"] 
         top_n_test = 5
 
         print(f"Testing get_user_content_based_recommendations_dynamic for user: {test_user_id}", file=sys.stderr)
