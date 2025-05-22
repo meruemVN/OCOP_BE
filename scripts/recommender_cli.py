@@ -14,7 +14,7 @@ PROJECT_ROOT_DIR = pathlib.Path(__file__).resolve().parent.parent
 ARTIFACTS_DIR = PROJECT_ROOT_DIR / "python_recommender_artifacts"
 
 PRODUCT_DATA_CSV_FILE = ARTIFACTS_DIR / 'buudien_ocop_products_detailed_v2_rerun.csv'
-PRODUCT_MAP_JSON_FILE = ARTIFACTS_DIR / 'product_id_name_map_v2_adv.json'
+PRODUCT_MAP_JSON_FILE = ARTIFACTS_DIR / 'product_id_name_map_v2_adv_enriched_with_mongo_id.json'
 PRECOMPUTED_PRODUCT_RECS_JSON_FILE = ARTIFACTS_DIR / 'precomputed_recommendations_v2_raw_adv.json'
 COSINE_SIM_MATRIX_FILE = ARTIFACTS_DIR / 'cosine_similarity_matrix_v2_adv.npy'
 PRODUCT_INDICES_MAP_FILE = ARTIFACTS_DIR / 'product_indices_map_v2_adv.pkl'
@@ -127,6 +127,7 @@ def get_recommendations_from_precomputed(product_id_input, top_n=TOP_N_FINAL_REC
         if rec_details:
             recommendations.append({
                 "product_id": rec_id_int, "name": rec_details.get("name", "N/A"),
+                "_id": rec_details.get("_id"),
                 "price": safe_float_convert(rec_details.get("price")),
                 "image_url": rec_details.get("image_url", ""),
                 "product_url": rec_details.get("product_url", ""),
@@ -168,6 +169,7 @@ def get_user_content_based_recommendations_dynamic(user_id_input, interacted_pro
                 if details:
                     recommendations.append({
                         "product_id": safe_int_convert(pid_str), "name": details.get("name", "N/A"),
+                        "_id": details.get("_id"),
                         "price": safe_float_convert(details.get("price")),
                         "image_url": details.get("image_url", ""),
                         "ocop_rating": safe_int_convert(details.get("ocop_rating")),
@@ -212,6 +214,7 @@ def get_user_content_based_recommendations_dynamic(user_id_input, interacted_pro
             if details:
                 recommendations.append({
                     "product_id": safe_int_convert(recommended_pid_str),
+                    "_id": details.get("_id"),
                     "name": details.get("name", "N/A"), "price": safe_float_convert(details.get("price")),
                     "image_url": details.get("image_url", ""), "product_url": details.get("product_url", ""),
                     "ocop_rating": safe_int_convert(details.get("ocop_rating")),

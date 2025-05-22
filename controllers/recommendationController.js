@@ -1,5 +1,6 @@
 const recommenderService = require('../services/recommender.service');
 const asyncHandler = require('express-async-handler'); 
+const User = require('../models/User'); 
 const Order = require('../models/Order');
 const Product = require('../models/Product');
 
