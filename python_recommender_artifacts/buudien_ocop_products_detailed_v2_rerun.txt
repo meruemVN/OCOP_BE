@@ -1,0 +1,917 @@
+const User = require('../../models/User');
+const Order = require('../../models/Order');
+const Product = require('../../models/Product');
+
+// @desc    Lấy thống kê cho trang dashboard
+// @route   GET /api/admin/dashboard
+// @access  Private/Admin
+exports.getDashboardStats = async (req, res) => {
+  try {
+    const userCount = await User.countDocuments({ role: 'user' });
+    const orderCount = await Order.countDocuments();
+    const productCount = await Product.countDocuments();
+    
+    // Tính tổng doanh thu
+    const orders = await Order.find({ status: 'completed' });
+    const totalRevenue = orders.reduce((sum, order) => sum + order.totalAmount, 0);
+    
+    // Lấy đơn hàng mới nhất
+    const recentOrders = await Order.find()
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .populate('user', 'name email');
+    
+    res.status(200).json({
+      success: true,
+      data: {
+        userCount,
+        orderCount,
+        productCount,
+        totalRevenue,
+        recentOrders
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi máy chủ',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Tạo admin
+// @route   POST /api/admin/create-admin
+// @access  Private/Admin
+exports.createAdmin = async (req, res) => {
+    try {
+      const { name, email, password, phoneNumber, address } = req.body;
+  
+      // Kiểm tra email đã tồn tại
+      const userExists = await User.findOne({ email });
+      if (userExists) {
+        return res.status(400).json({
+          success: false,
+          message: 'Email đã được sử dụng'
+        });
+      }
+  
+      // Tạo admin mới
+      const admin = await User.create({
+        name,
+        email,
+        password,
+        phoneNumber,
+        address,
+        role: 'admin'
+      });
+  
+      sendTokenResponse(admin, 201, res);
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: 'Lỗi máy chủ',
+        error: error.message
+      });
+    }
+  };
+
+// @desc    Lấy tất cả người dùng
+// @route   GET /api/admin/users
+// @access  Private/Admin
+exports.getAllUsers = async (req, res) => {
+  try {
+    const users = await User.find().select('-password');
+    
+    res.status(200).json({
+      success: true,
+      count: users.length,
+      data: users
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi máy chủ',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Lấy tất cả đơn hàng
+// @route   GET /api/admin/orders
+// @access  Private/Admin
+exports.getAllOrders = async (req, res) => {
+  try {
+    const orders = await Order.find()
+      .populate('user', 'name email')
+      .populate('products.product', 'name price');
+    
+    res.status(200).json({
+      success: true,
+      count: orders.length,
+      data: orders
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi máy chủ',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Cập nhật trạng thái đơn hàng
+// @route   PUT /api/admin/orders/:id
+// @access  Private/Admin
+exports.updateOrder = async (req, res) => {
+  try {
+    const { status } = req.body;
+    
+    if (!status) {
+      return res.status(400).json({
+        success: false,
+        message: 'Vui lòng cung cấp trạng thái đơn hàng'
+      });
+    }
+    
+    let order = await Order.findById(req.params.id);
+    
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Không tìm thấy đơn hàng'
+      });
+    }
+    
+    order.status = status;
+    await order.save();
+    
+    res.status(200).json({
+      success: true,
+      data: order
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi máy chủ',
+      error: error.message
+    });
+  }
+};const User = require('../../models/User');
+
+// @desc    Đăng ký người dùng
+// @route   POST /api/auth/register
+// @access  Public
+exports.register = async (req, res) => {
+  try {
+    const { name, email, password, phoneNumber, address } = req.body;
+
+    // Kiểm tra email đã tồn tại
+    const userExists = await User.findOne({ email });
+    if (userExists) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email đã được sử dụng'
+      });
+    }
+
+    // Tạo người dùng mới
+    const user = await User.create({
+      name,
+      email,
+      password,
+      phoneNumber,
+      address
+    });
+
+    sendTokenResponse(user, 201, res);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi máy chủ',
+      error: error.message
+    });
+  }
+};
+
+
+// @desc    Đăng nhập người dùng
+// @route   POST /api/auth/login
+// @access  Public
+exports.login = async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    // Kiểm tra email và password
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Vui lòng nhập email và mật khẩu'
+      });
+    }
+
+    // Kiểm tra người dùng
+    const user = await User.findOne({ email }).select('+password');
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Thông tin đăng nhập không hợp lệ'
+      });
+    }
+
+    // Kiểm tra mật khẩu
+    const isMatch = await user.matchPassword(password);
+    if (!isMatch) {
+      return res.status(401).json({
+        success: false,
+        message: 'Thông tin đăng nhập không hợp lệ'
+      });
+    }
+
+    sendTokenResponse(user, 200, res);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi máy chủ',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Lấy thông tin người dùng hiện tại
+// @route   GET /api/auth/me
+// @access  Private
+exports.getMe = async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+
+    res.status(200).json({
+      success: true,
+      data: user
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi máy chủ',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Đăng xuất / xóa cookie
+// @route   GET /api/auth/logout
+// @access  Private
+exports.logout = async (req, res) => {
+  res.status(200).json({
+    success: true,
+    data: {}
+  });
+};
+
+// Hàm gửi token trong cookie
+const sendTokenResponse = (user, statusCode, res) => {
+  // Tạo token
+  const token = user.getSignedJwtToken();
+
+  const options = {
+    expires: new Date(
+      Date.now() + process.env.JWT_COOKIE_EXPIRE * 24 * 60 * 60 * 1000
+    ),
+    httpOnly: true
+  };
+
+  if (process.env.NODE_ENV === 'production') {
+    options.secure = true;
+  }
+
+  res.status(statusCode).json({
+    success: true,
+    token,
+    user: {
+      id: user._id,
+      name: user.name,
+      email: user.email,
+      role: user.role
+    }
+  });
+};
+const Order = require('../../models/Order');
+const Product = require('../../models/Product');
+
+// @desc    Tạo đơn hàng mới
+// @route   POST /api/orders
+// @access  Private
+exports.createOrder = async (req, res) => {
+  try {
+    const {
+      orderItems,
+      shippingAddress,
+      paymentMethod,
+      itemsPrice,
+      shippingPrice,
+      totalPrice
+    } = req.body;
+
+    if (orderItems && orderItems.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Không có sản phẩm nào trong đơn hàng'
+      });
+    }
+
+    // Kiểm tra tồn kho
+    for (const item of orderItems) {
+      const product = await Product.findById(item.product);
+      if (!product) {
+        return res.status(404).json({
+          success: false,
+          message: `Sản phẩm không tồn tại: ${item.name}`
+        });
+      }
+
+      if (product.countInStock < item.qty) {
+        return res.status(400).json({
+          success: false,
+          message: `Sản phẩm "${product.name}" chỉ còn ${product.countInStock} sản phẩm`
+        });
+      }
+    }
+
+    const order = new Order({
+      user: req.user._id,
+      orderItems,
+      shippingAddress,
+      paymentMethod,
+      itemsPrice,
+      shippingPrice,
+      totalPrice
+    });
+
+    const createdOrder = await order.save();
+
+    // Cập nhật số lượng tồn kho và số lượng đã bán
+    for (const item of orderItems) {
+      const product = await Product.findById(item.product);
+      product.countInStock -= item.qty;
+      product.sold += item.qty;
+      await product.save();
+    }
+
+    res.status(201).json({
+      success: true,
+      data: createdOrder
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi máy chủ',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Lấy đơn hàng theo ID
+// @route   GET /api/orders/:id
+// @access  Private
+exports.getOrderById = async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id).populate(
+      'user',
+      'name email'
+    );
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Không tìm thấy đơn hàng'
+      });
+    }
+
+    // Kiểm tra người dùng có quyền xem đơn hàng
+    if (
+      order.user._id.toString() !== req.user._id.toString() &&
+      req.user.role !== 'admin'
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: 'Không có quyền xem đơn hàng này'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: order
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi máy chủ',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Cập nhật trạng thái thanh toán
+// @route   PUT /api/orders/:id/pay
+// @access  Private
+exports.updateOrderToPaid = async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id);
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Không tìm thấy đơn hàng'
+      });
+    }
+
+    order.isPaid = true;
+    order.paidAt = Date.now();
+    order.paymentResult = {
+      id: req.body.id,
+      status: req.body.status,
+      update_time: req.body.update_time,
+      email_address: req.body.email_address
+    };
+
+    const updatedOrder = await order.save();
+
+    res.status(200).json({
+      success: true,
+      data: updatedOrder
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi máy chủ',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Cập nhật trạng thái giao hàng
+// @route   PUT /api/orders/:id/deliver
+// @access  Private/Admin
+exports.updateOrderToDelivered = async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id);
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Không tìm thấy đơn hàng'
+      });
+    }
+
+    order.isDelivered = true;
+    order.deliveredAt = Date.now();
+    order.status = 'Đã giao hàng';
+
+    const updatedOrder = await order.save();
+
+    res.status(200).json({
+      success: true,
+      data: updatedOrder
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi máy chủ',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Lấy danh sách đơn hàng của người dùng
+// @route   GET /api/orders/myorders
+// @access  Private
+exports.getMyOrders = async (req, res) => {
+  try {
+    const orders = await Order.find({ user: req.user._id });
+    res.status(200).json({
+      success: true,
+      data: orders
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi máy chủ',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Lấy tất cả đơn hàng
+// @route   GET /api/orders
+// @access  Private/Admin
+exports.getOrders = async (req, res) => {
+  try {
+    const orders = await Order.find({}).populate('user', 'id name');
+    res.status(200).json({
+      success: true,
+      data: orders
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi máy chủ',
+      error: error.message
+    });
+  }
+};const Product = require('../../models/Product');
+
+// @desc    Lấy tất cả sản phẩm
+// @route   GET /api/products
+// @access  Public
+exports.getProducts = async (req, res) => {
+  try {
+    let query;
+    const reqQuery = { ...req.query };
+
+    // Các field không dùng để tìm kiếm
+    const removeFields = ['select', 'sort', 'page', 'limit'];
+    removeFields.forEach(param => delete reqQuery[param]);
+
+    // Tạo query string
+    let queryStr = JSON.stringify(reqQuery);
+
+    // Tạo operators ($gt, $gte, etc)
+    queryStr = queryStr.replace(/\b(gt|gte|lt|lte|in)\b/g, match => `$${match}`);
+
+    // Tìm theo danh mục
+    if (req.query.category) {
+      query = Product.find({ category: req.query.category });
+    } else {
+      query = Product.find(JSON.parse(queryStr));
+    }
+
+    // Select Fields
+    if (req.query.select) {
+      const fields = req.query.select.split(',').join(' ');
+      query = query.select(fields);
+    }
+
+    // Sort
+    if (req.query.sort) {
+      const sortBy = req.query.sort.split(',').join(' ');
+      query = query.sort(sortBy);
+    } else {
+      query = query.sort('-createdAt');
+    }
+
+    // Pagination
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 12;
+    const startIndex = (page - 1) * limit;
+    const endIndex = page * limit;
+    const total = await Product.countDocuments(JSON.parse(queryStr));
+
+    query = query.skip(startIndex).limit(limit);
+
+    // Populate
+    query = query.populate('category', 'name');
+
+    // Thực thi query
+    const products = await query;
+
+    // Pagination result
+    const pagination = {};
+
+    if (endIndex < total) {
+      pagination.next = {
+        page: page + 1,
+        limit
+      };
+    }
+
+    if (startIndex > 0) {
+      pagination.prev = {
+        page: page - 1,
+        limit
+      };
+    }
+
+    res.status(200).json({
+      success: true,
+      count: products.length,
+      pagination,
+      data: products
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi máy chủ',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Lấy thông tin sản phẩm
+// @route   GET /api/products/:id
+// @access  Public
+exports.getProduct = async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.id).populate('category', 'name');
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: 'Không tìm thấy sản phẩm'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: product
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi máy chủ',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Tạo sản phẩm mới
+// @route   POST /api/products
+// @access  Private/Admin
+exports.createProduct = async (req, res) => {
+  try {
+    const product = await Product.create(req.body);
+
+    res.status(201).json({
+      success: true,
+      data: product
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi máy chủ',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Cập nhật sản phẩm
+// @route   PUT /api/products/:id
+// @access  Private/Admin
+exports.updateProduct = async (req, res) => {
+  try {
+    let product = await Product.findById(req.params.id);
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: 'Không tìm thấy sản phẩm'
+      });
+    }
+
+    product = await Product.findByIdAndUpdate(req.params.id, req.body, {
+      new: true,
+      runValidators: true
+    });
+
+    res.status(200).json({
+      success: true,
+      data: product
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi máy chủ',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Xóa sản phẩm
+// @route   DELETE /api/products/:id
+// @access  Private/Admin
+exports.deleteProduct = async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.id);
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: 'Không tìm thấy sản phẩm'
+      });
+    }
+
+    await Product.deleteOne({ _id: req.params.id });
+
+    res.status(200).json({
+      success: true,
+      data: {}
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi máy chủ',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Upload hình ảnh sản phẩm
+// @route   PUT /api/products/:id/upload
+// @access  Private/Admin
+exports.productUploadImage = async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.id);
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: 'Không tìm thấy sản phẩm'
+      });
+    }
+
+    if (!req.files) {
+      return res.status(400).json({
+        success: false,
+        message: 'Vui lòng tải lên hình ảnh'
+      });
+    }
+
+    const file = req.files.file;
+
+    // Kiểm tra loại file
+    if (!file.mimetype.startsWith('image')) {
+      return res.status(400).json({
+        success: false,
+        message: 'Vui lòng tải lên hình ảnh'
+      });
+    }
+
+    // Kiểm tra kích thước
+    if (file.size > process.env.MAX_FILE_UPLOAD) {
+      return res.status(400).json({
+        success: false,
+        message: `Vui lòng tải lên hình ảnh nhỏ hơn ${process.env.MAX_FILE_UPLOAD}`
+      });
+    }
+
+    // Tạo tên file custom
+    file.name = `photo_${product._id}${path.parse(file.name).ext}`;
+
+    file.mv(`${process.env.FILE_UPLOAD_PATH}/${file.name}`, async err => {
+      if (err) {
+        console.error(err);
+        return res.status(500).json({
+          success: false,
+          message: 'Lỗi khi tải hình ảnh'
+        });
+      }
+
+      // Cập nhật đường dẫn ảnh trong database
+      await Product.findByIdAndUpdate(req.params.id, {
+        $push: { images: file.name }
+      });
+
+      res.status(200).json({
+        success: true,
+        data: file.name
+      });
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi máy chủ',
+      error: error.message
+    });
+  }
+};const User = require('../../models/User');
+
+// @desc    Lấy tất cả người dùng
+// @route   GET /api/users
+// @access  Private/Admin
+exports.getUsers = async (req, res) => {
+  try {
+    const users = await User.find({});
+    res.status(200).json({
+      success: true,
+      data: users
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi máy chủ',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Lấy thông tin người dùng theo ID
+// @route   GET /api/users/:id
+// @access  Private/Admin
+exports.getUser = async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Không tìm thấy người dùng'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: user
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi máy chủ',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Tạo người dùng mới
+// @route   POST /api/users
+// @access  Private/Admin
+exports.createUser = async (req, res) => {
+  try {
+    const user = await User.create(req.body);
+
+    res.status(201).json({
+      success: true,
+      data: user
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi máy chủ',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Cập nhật thông tin người dùng
+// @route   PUT /api/users/:id
+// @access  Private/Admin
+exports.updateUser = async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Không tìm thấy người dùng'
+      });
+    }
+
+    // Không cho phép cập nhật mật khẩu qua route này
+    if (req.body.password) {
+      delete req.body.password;
+    }
+
+    const updatedUser = await User.findByIdAndUpdate(req.params.id, req.body, {
+      new: true,
+      runValidators: true
+    });
+
+    res.status(200).json({
+      success: true,
+      data: updatedUser
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi máy chủ',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Xóa người dùng
+// @route   DELETE /api/users/:id
+// @access  Private/Admin
+exports.deleteUser = async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Không tìm thấy người dùng'
+      });
+    }
+
+    await User.deleteOne({ _id: req.params.id });
+
+    res.status(200).json({
+      success: true,
+      data: {}
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Lỗi máy chủ',
+      error: error.message
+    });
+  }
+};
