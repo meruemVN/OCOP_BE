@@ -5,83 +5,168 @@ const Product = require('../models/Product');
 
 // @desc    Lấy tất cả sản phẩm VỚI LỌC, SẮP XẾP, PHÂN TRANG (tiếng Việt, không phân biệt dấu)
 const getProducts = asyncHandler(async (req, res) => {
-  const {
-    keyword,
-    category,
-    province,
-    min_price,
-    max_price,
-    rating,
-    sort_by,
-    page = 1,
-    pageSize,
-    perPage
-  } = req.query;
+  try { // Bọc trong try...catch để debug lỗi 500 dễ hơn
+    const {
+      keyword,
+      category,
+      origin,
+      priceMin,
+      priceMax,
+      rating,
+      sort_by,
+      page,    // Biến 'page' từ req.query (nên là string số, ví dụ '1', '2')
+      per_page // Biến 'per_page' từ req.query (nên là string số, ví dụ '12')
+    } = req.query;
 
-  const limit   = Math.max(1, parseInt(pageSize ?? perPage ?? 12, 10));
-  const pageNum = Math.max(1, parseInt(page, 10));
-  const skip    = (pageNum - 1) * limit;
+    // Sử dụng biến 'localPerPage' để rõ ràng hơn sau khi lấy từ query.
+    // Nếu frontend gửi 'perPage' (camelCase), bạn cần destruct 'perPage' thay vì 'per_page'.
+    const localPerPage = per_page;
 
-  // --- Build filterConditions ---
-  const filterConditions = {};
+    console.log("Backend received req.query:", req.query);
+    console.log("Backend keyword:", keyword);
+    console.log("Backend page from query:", page, "(type:", typeof page, ")");
+    console.log("Backend localPerPage from query (per_page):", localPerPage, "(type:", typeof localPerPage, ")");
 
-  // 1) Search keyword trên name, description, category
-  if (keyword) {
-    const regex = new RegExp(keyword, 'i');
-    filterConditions.$or = [
-      { name:        regex },
-      { description: regex },
-      { category:    regex }
-    ];
+    // --- Build filterConditions ---
+    const filterConditions = {};
+    if (keyword && keyword.trim() !== '') {
+      const regex = new RegExp(keyword, 'i'); // 'i' for case-insensitive
+      filterConditions.$or = [
+        { name: regex },
+        { description: regex },
+        { category: regex } // Có thể bạn muốn tìm cả trong category nữa
+      ];
+    }
+    if (category) {
+      filterConditions.category = new RegExp(category, 'i');
+    }
+    if (origin) {
+      filterConditions.origin = new RegExp(origin, 'i');
+    }
+    const priceFilter = {};
+    if (priceMin !== undefined && !isNaN(Number(priceMin)) && Number(priceMin) >= 0) {
+      priceFilter.$gte = Number(priceMin);
+    }
+    if (priceMax !== undefined && !isNaN(Number(priceMax)) && Number(priceMax) >= 0) {
+      if (priceFilter.$gte === undefined || Number(priceMax) >= priceFilter.$gte) {
+        priceFilter.$lte = Number(priceMax);
+      } else {
+        console.warn("priceMax is less than priceMin, ignoring priceMax.");
+      }
+    }
+    if (Object.keys(priceFilter).length > 0) {
+      filterConditions.price = priceFilter;
+    }
+    if (rating !== undefined && !isNaN(Number(rating))) {
+      filterConditions.rating = { $gte: Number(rating) };
+    }
+    console.log("Backend filterConditions:", JSON.stringify(filterConditions));
+
+    // --- Build sortOption ---
+    const sortMap = {
+      priceAsc:  { price: 1, _id: 1 },        // Sắp xếp phụ theo _id để ổn định
+      priceDesc: { price: -1, _id: 1 },       // Sắp xếp phụ theo _id
+      newest:    { createdAt: -1, _id: 1 },   // Sắp xếp phụ theo _id
+      popular:   { sold: -1, numReviews: -1, rating: -1, _id: 1 } // Sắp xếp phụ theo _id
+    };
+    // Mặc định sắp xếp theo newest nếu sort_by không hợp lệ hoặc không được cung cấp
+    const sortOption = sortMap[sort_by] || { createdAt: -1, _id: 1 };
+    console.log("Backend sortOption:", JSON.stringify(sortOption));
+
+    // --- Query DB ---
+    console.log("Backend: Counting documents...");
+    const count = await Product.countDocuments(filterConditions);
+    console.log("Backend: Counted documents:", count);
+
+    let productsQuery = Product.find(filterConditions)
+      .collation({ locale: 'vi', strength: 1 }) // Hỗ trợ tiếng Việt không dấu, không phân biệt hoa thường
+      .sort(sortOption);
+
+    let isPagingEnabled = false;
+    let pageNumValueForQuery = 1; // Giá trị mặc định cho số trang sẽ sử dụng trong query
+
+    // Phân trang chỉ được kích hoạt nếu cả 'page' và 'localPerPage' (tức 'per_page') được cung cấp
+    if (localPerPage !== undefined && page !== undefined) {
+      isPagingEnabled = true;
+      // Chuyển đổi page từ query (string) sang số
+      const parsedPage = parseInt(page, 10);
+      if (isNaN(parsedPage) || parsedPage < 1) {
+        console.warn(`Invalid page value received: '${page}'. Defaulting to page 1.`);
+        pageNumValueForQuery = 1;
+      } else {
+        pageNumValueForQuery = parsedPage;
+      }
+    }
+    console.log("Backend isPagingEnabled:", isPagingEnabled, "Using pageNumForQuery:", pageNumValueForQuery);
+
+    if (isPagingEnabled) {
+      const parsedLimit = parseInt(localPerPage, 10);
+      if (isNaN(parsedLimit) || parsedLimit < 1) {
+        console.error(`!!!! Invalid localPerPage value received: '${localPerPage}'. Cannot perform pagination. !!!!`);
+        // Có thể throw lỗi ở đây hoặc trả về lỗi 400 Bad Request
+        // throw new Error("Giá trị 'per_page' không hợp lệ.");
+        // Hoặc, nếu muốn an toàn hơn, không phân trang và trả về lỗi
+        isPagingEnabled = false; // Tắt phân trang nếu limit không hợp lệ
+        console.log("Backend: Pagination disabled due to invalid per_page. Fetching all matching query (if any).");
+      } else {
+        const limitValue = Math.max(1, parsedLimit); // Đảm bảo limit ít nhất là 1
+        const skipValue = (pageNumValueForQuery - 1) * limitValue;
+        productsQuery = productsQuery.skip(skipValue).limit(limitValue);
+        console.log(`Backend Paging: skip=${skipValue}, limit=${limitValue} for pageNumValueForQuery: ${pageNumValueForQuery}`);
+      }
+    } else {
+      console.log("Backend NOT Paging (either no page/per_page params, or due to keyword search from FE logic)");
+    }
+
+    console.log("Backend: Finding products...");
+    const products = await productsQuery.populate('distributor', 'name'); // Populate thông tin nhà phân phối
+    console.log("Backend products found:", products.length);
+
+    // --- Chuẩn bị dữ liệu trả về ---
+    let responsePages = 1; // Mặc định là 1 trang nếu không phân trang
+    let responsePageNum = 1; // Mặc định là trang 1
+
+    if (isPagingEnabled) {
+      const limitForCalc = Math.max(1, parseInt(localPerPage, 10)); // Đảm bảo đã parse và hợp lệ
+      if (!isNaN(limitForCalc) && limitForCalc > 0) { // Chỉ tính toán nếu limit hợp lệ
+        responsePages = Math.ceil(count / limitForCalc);
+      } else {
+        responsePages = 1; // Nếu limit không hợp lệ, coi như 1 trang
+      }
+      responsePageNum = pageNumValueForQuery; // Số trang trả về là số trang đã dùng để query
+    } else {
+      // Nếu không phân trang (ví dụ: tìm theo keyword), thì chỉ có 1 trang kết quả
+      responsePages = 1;
+      responsePageNum = 1;
+    }
+    // Đảm bảo responsePageNum không lớn hơn responsePages (trường hợp page query lớn hơn tổng số trang)
+    if (responsePageNum > responsePages && responsePages > 0) {
+        responsePageNum = responsePages;
+    }
+    // Đảm bảo responsePageNum ít nhất là 1
+    if (responsePages === 0 && count > 0) { // Nếu có sản phẩm nhưng responsePages = 0 (do lỗi tính toán)
+        responsePages = 1; // Ít nhất là 1 trang
+    }
+     if (responsePages === 0 && count === 0) { // Không có sản phẩm nào
+        responsePageNum = 1; // Vẫn là trang 1
+    }
+
+
+    const responseJson = {
+      products,
+      page: responsePageNum,
+      pages: responsePages,
+      count
+    };
+    console.log("Backend final responseJson.page:", responseJson.page, "responseJson.pages:", responseJson.pages, "responseJson.count:", responseJson.count);
+    res.json(responseJson);
+
+  } catch (error) {
+    console.error("!!!! FATAL ERROR IN getProducts !!!!:", error);
+    console.error("Error stack trace:", error.stack);
+    // Trả về lỗi 500 nếu có bất kỳ lỗi nào không mong muốn xảy ra
+    res.status(500).json({ message: "Lỗi máy chủ nội bộ khi lấy danh sách sản phẩm.", errorDetails: error.message });
   }
-
-  // 2) Category
-  if (category) {
-    filterConditions.category = new RegExp(category, 'i');
-  }
-
-  // 3) Province (origin)
-  if (province) {
-    filterConditions.origin = new RegExp(province, 'i');
-  }
-
-  // 4) Price range
-  const priceFilter = {};
-  if (!isNaN(Number(min_price))) priceFilter.$gte = Number(min_price);
-  if (!isNaN(Number(max_price))) priceFilter.$lte = Number(max_price);
-  if (Object.keys(priceFilter).length) filterConditions.price = priceFilter;
-
-  // 5) Rating
-  if (!isNaN(Number(rating))) {
-    filterConditions.rating = { $gte: Number(rating) };
-  }
-
-  // --- Build sortOption ---
-  const sortMap = {
-    priceAsc:  { price: 1 },
-    priceDesc: { price: -1 },
-    newest:    { createdAt: -1 },
-    popular:   { sold: -1, numReviews: -1, rating: -1 }
-  };
-  const sortOption = sortMap[sort_by] || { createdAt: -1 };
-
-  // --- Query DB with Vietnamese collation (strength:1 ignores accents + case) ---
-  const [count, products] = await Promise.all([
-    Product.countDocuments(filterConditions),
-    Product.find(filterConditions)
-      .collation({ locale: 'vi', strength: 1 })
-      .sort(sortOption)
-      .skip(skip)
-      .limit(limit)
-      .populate('distributor', 'name')
-  ]);
-
-  res.json({
-    products,
-    page:  pageNum,
-    pages: Math.ceil(count / limit),
-    count
-  });
 });
 
 // @desc    Lấy một sản phẩm theo ID
